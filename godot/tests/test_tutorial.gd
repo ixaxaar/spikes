@@ -1,7 +1,8 @@
 extends SceneTree
 ## Headless test of Plate 0's first-run logic (ui/tutorial.gd): a fresh save starts the tutorial at step 1 on Play, a skipped or finished tutorial never
 ## restarts (also after the save is read again from disk), the mode picker is owed exactly until a mode was chosen, a save with progress is not "fresh",
-## Reset starts over, and the step table is honest (no digits in the text, every action step can be done for the player).
+## Reset starts over, and the step table is honest (the twelve steps say what the owner wrote, no digits in the text, every action step can be done for the player and
+## starts the pad's focus on a control, the wiring steps name the pad's buttons).
 ##   scripts/tutorial_test.sh   (ctest `tutorial`): XDG_DATA_HOME points at a scratch folder so the real save is never touched
 ##   godot --headless --path godot -s tests/test_tutorial.gd     prints "TUTORIAL OK" or "TUTORIAL FAIL: ..." (exit 1); refuses to run without XDG_DATA_HOME
 
@@ -104,7 +105,7 @@ func _flow() -> void:
 	var lab2 := LabScreen.new(); lab2.task_id = Tutorial.TASK
 	tut.lab_opened(lab2)
 	_check(tut.active and tut.step == 1, "a replay starts at step 1")
-	for i in range(1, 9): tut._next()   # steps 10 and 11 need the real editor (the UI graph walks them)
+	for i in range(1, 9): tut._next()   # step 11 needs the real editor (the UI graph walks it, also with a gamepad alone)
 	_check(tut.step == 9, "Next walks the steps")
 	tut._back()
 	_check(tut.step == 8, "Back a step goes back")
@@ -123,17 +124,41 @@ func _flow() -> void:
 	for n in [tut, app, lab, lab2, lab3]: n.free()
 	_wipe()
 
+const SPEC := [
+	"This is the bench. On the left is a sensor. It sends a signal in. On the right is a motor. It shows what comes out. You build the cells in between.",
+	"Add a cell. Press + Excitatory.",
+	"Connect the sensor to the cell. Drag from the right edge of the sensor onto the cell.",
+	"Connect the cell to the motor. Drag from the edge of the cell onto the motor.",
+	"Press Run. Nothing runs until you press it.",
+	"Top plot: each tick is one spike. A spike is the cell firing. Bottom line: the cell's voltage. It went up, but not far enough to fire. So there are no spikes yet.",
+	"Make the signal stronger. Click the sensor. Drag the weight slider up. Press Run. Repeat until the cell fires.",
+	"The goal: fire on the big step, not on the small blip. Too strong and it fires on both. Change the weight, press Run, and read the score on the right. Repeat until it says passed.",
+	"Press Check. It tests your circuit five times, each with different noise.",
+	"The result is on the right. A pass earns a star. Passing all five tests and using few cells earns more.",
+	"I added a second cell. Select it and press E / I. Now it is inhibitory: it pushes other cells down instead of up.",
+	"Stuck? Hint gives a nudge. Brief says what the level wants. Press Finish.",
+]
+
 func _table() -> void:
 	var tut := Tutorial.new()
 	var steps := tut._steps()
+	_check(Tutorial.STEP_COUNT == 12 and steps.size() == 12, "the tutorial has twelve lab steps (the mode picker is the thirteenth)")
+	for i in mini(steps.size(), SPEC.size()): _check(str((steps[i] as Dictionary)["text"]) == SPEC[i], "step %d says what the owner wrote: %s" % [i + 1, str((steps[i] as Dictionary)["text"])])
 	_check(steps.size() == Tutorial.STEP_COUNT, "the step table has %d lab steps (got %d)" % [Tutorial.STEP_COUNT, steps.size()])
 	var re := RegEx.new(); re.compile("[0-9]")
 	for i in steps.size():
 		var st: Dictionary = steps[i]; var t := str(st.get("text", ""))
 		_check(t != "", "step %d has text" % (i + 1))
 		_check(re.search(t) == null, "step %d text has no digits (the honesty rule): %s" % [i + 1, t])
-		if str(st.get("kind", "")) == "act": _check(st.has("done") and st.has("do"), "step %d is an action step: it has a condition and a way to do it for the player" % (i + 1))
+		if st.has("pad"): _check(re.search(str(st["pad"])) == null, "step %d pad text has no digits: %s" % [i + 1, str(st["pad"])])
+		if str(st.get("kind", "")) == "act":
+			_check(st.has("done") and st.has("do"), "step %d is an action step: it has a condition and a way to do it for the player" % (i + 1))
+			_check(str(st.get("focus", "")) != "" and st.has("pad"), "step %d is an action step: the pad's focus starts on its control and its text names the pad's buttons" % (i + 1))
 		else: _check(str(st.get("kind", "")) == "next", "step %d is Next or an action" % (i + 1))
+		_check(not ("pad" in st) or str(st["pad"]) != str(st["text"]), "step %d has a pad text that differs from the mouse text" % (i + 1))
+	for i in [2, 3]:   # the wires: the bench's own pad flow, X starts a wire and A ends it
+		var pt := str((steps[i] as Dictionary).get("pad", ""))
+		_check(pt.contains("press X") and pt.contains("press A"), "step %d names X and A for the pad: %s" % [i + 1, pt])
 	for t in Tutorial.TIPS:
 		_check(re.search(str(Tutorial.TIPS[t]["text"])) == null, "the pointer for %s has no digits" % t)
 	tut.free()

@@ -1,13 +1,10 @@
 class_name Celebration
 extends Control
-## The lab's moments layer (docs/DESIGN-0.3.md section 8): toasts, and the first-pass celebration: slow motion, a camera push on the circuit, a glow trail that runs
-## down the critical path (sensor to motor), a banner, and the lab-notebook entry unlocked by the pass. One node over the whole lab; it ignores the mouse.
-## Reduced motion keeps the banner and the toasts and drops the slow motion, the push and the trail.
-const SLOW_SPEED := 0.25
-const SLOW_S := 2.4
+## The lab's moments layer (docs/DESIGN-0.3.md section 8): toasts, and the first-pass celebration: a toast, a glow trail that runs down the critical path (sensor
+## to motor) and the lab-notebook entry unlocked by the pass. One node over the whole lab; it ignores the mouse and never blocks the bench.
+## Reduced motion keeps the toasts and drops the trail.
 const TRAIL_LOOP_S := 1.0
 const TRAIL_LOOPS := 3
-const PUSH := 0.14
 
 var _toasts: Array = []             # {node, age, life}: the toast on screen (at most one)
 var _queue: Array = []              # toasts waiting for their turn: {title, text, col, life}
@@ -17,22 +14,13 @@ var _col: VBoxContainer
 var _editor: CircuitEditor = null
 var _tele: Telemetry = null
 var _t := -1.0                      # seconds into a celebration, < 0 = none
-var _saved_speed := 1.0
-var _slowed := false
 var _note := {}
 var _note_shown := false
-var _banner: StampMark = null
 var _note_card: PanelContainer = null  # the notebook entry a first pass unlocks: two lines and "Open notebook", pinned to the editor's bottom-left corner
 var _note_age := 0.0
-const NOTE_LIFE := 9.0
+const NOTE_LIFE := 7.0
 ## () -> void, set by the lab: opens the notebook (the lab keeps its circuit). Unset: the card has no button.
 var open_notebook: Callable = Callable()
-
-## The first-pass banner: a viridian rubber stamp ("FIRST PASS", the score, "of 100") that lands on the lab.
-class StampMark extends Control:
-	var k := 1.0
-	var score := 100
-	func _draw() -> void: Gfx.stamp(self, size * 0.5, minf(size.x, size.y) * 0.5 - 6.0, "FIRST PASS", "%d" % score, "of 100", Kit.success(), -0.2, k)
 
 func _ready() -> void:
 	set_anchors_and_offsets_preset(Control.PRESET_FULL_RECT); mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -109,18 +97,14 @@ func _place_note() -> void:
 	else: _note_card.position = Vector2(12.0, size.y - ms.y - 12.0)
 
 ## Start the first-pass celebration on `editor` / `tele`: `path` is the critical path (Circuits.critical_path), `note` the notebook entry (Task::notebook()).
+## It never blocks input and never covers the bench: a glow runs along the path from the sensor to the motor, a short toast says what happened, and the notebook card
+## (small, in a corner) offers the entry the pass unlocked. The run is not slowed and the view does not move.
 func first_pass(editor: CircuitEditor, tele: Telemetry, path: Array, note: Dictionary) -> void:
 	if _t >= 0.0: return
 	_editor = editor; _tele = tele; _note = note; _note_shown = false; _t = 0.0
 	GameAudio.event("celebrate")
-	if _banner == null:
-		_banner = StampMark.new(); Kit.ident(_banner, "FirstPassStamp"); _banner.mouse_filter = Control.MOUSE_FILTER_IGNORE; add_child(_banner)
-	var side := 260.0 if not Layout.phone else 170.0
-	_banner.size = Vector2(side, side); _banner.score = int(roundf(float(tele.score.get("value", 100.0))))
-	_banner.visible = true; _banner.modulate.a = 0.0
+	toast("First pass", "Score %d of 100. The glow shows the path your signal took." % int(roundf(float(tele.score.get("value", 100.0)))), Kit.GREEN, 4.0)
 	if Kit.motion() or OS.get_environment("SP_CELEB") != "":   # the dev hook shows the motion even where screenshots turn it off
-		_saved_speed = tele.speed; tele.speed = SLOW_SPEED; _slowed = true
-		editor.push(PUSH, SLOW_S + 0.4)
 		editor.trail = path; editor.trail_u = 0.0 if path.size() >= 2 else -1.0
 
 func active() -> bool: return _t >= 0.0
@@ -145,29 +129,18 @@ func _process(dt: float) -> void:
 			elif left < 0.6: _note_card.modulate.a = left / 0.6
 	if _t < 0.0: return
 	_t += dt
-	# banner: pops in over 0.25 s, holds, fades from 2.2 s
-	if _banner != null:
-		_banner.modulate.a = 1.0 - clampf((_t - 2.2) / 0.6, 0.0, 1.0); _banner.k = clampf(_t / 0.25, 0.0, 1.0); _banner.queue_redraw()
-		_banner.position = (size - _banner.size) * 0.5
-		_banner.visible = not held   # the end card carries its own PASSED stamp: a second one over its buttons (a short episode, a phone) is one too many
 	if _editor != null and is_instance_valid(_editor) and _editor.trail_u >= 0.0:
 		var loop := _t / TRAIL_LOOP_S
 		_editor.trail_u = -1.0 if loop >= float(TRAIL_LOOPS) else fposmod(loop, 1.0)
 		if _editor.trail_u < 0.0: _editor.trail = []
-	if _slowed and _t >= SLOW_S and _tele != null:
-		_tele.speed = _saved_speed; _slowed = false
 	if not _note_shown and _t >= 1.0:
 		_note_shown = true
 		if str(_note.get("title", "")) != "": _show_note(str(_note["title"]), str(_note.get("text", "")))
 	if _t >= 3.2:
 		_t = -1.0
-		if _banner != null: _banner.visible = false
-		if _slowed and _tele != null: _tele.speed = _saved_speed; _slowed = false
 		if _editor != null and is_instance_valid(_editor): _editor.trail_u = -1.0; _editor.trail = []
 
-## Stop a celebration at once (the circuit was edited or reloaded): the speed goes back, the trail goes out.
+## Stop a celebration at once (the circuit was edited or reloaded): the trail goes out.
 func abort() -> void:
-	if _slowed and _tele != null: _tele.speed = _saved_speed
-	_slowed = false; _t = -1.0
-	if _banner != null: _banner.visible = false
+	_t = -1.0
 	if _editor != null and is_instance_valid(_editor): _editor.trail_u = -1.0; _editor.trail = []

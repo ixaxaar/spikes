@@ -32,6 +32,7 @@ func build() -> void:
 			"proj": inspect_proj(int(sel["i"]), small)
 			"in": inspect_channel("inputs", str(sel["name"]), small)
 			"out": inspect_channel("outputs", str(sel["name"]), small)
+			"ilink", "olink": inspect_link(sel, small)
 	lab.layout.sheet_sync()
 	lab.layout.fit_inspector.call_deferred()
 
@@ -454,6 +455,17 @@ func _mb_synapse(pr: Dictionary, i: int, small: int) -> void:
 		add(val_row("trace", 5.0, 500.0, 1.0, float(sy.get("tau_c", 30.0)), "ms", func(x): sy["tau_c"] = x; pr["synapse"] = sy; lab._on_structure(), 0))
 		add(val_row("max weight", 1.0, 10000.0, 10.0, float(sy.get("Wmax", 100.0)), "", func(x): sy["Wmax"] = x; pr["synapse"] = sy; lab._on_structure(), 0))
 		add(Kit.label("Learning: how much one pairing takes away (the sign is set so that the synapse depresses). Trace: how long a synapse stays eligible after its input fired. Max weight: the largest strength it can have.", small, Kit.TEXT_SOFT, true))
+
+## One link of a sensor or a motor: the sensor (or cell) it leaves, the cell (or motor) it reaches, and the way to take it away.
+func inspect_link(sel: Dictionary, small: int) -> void:
+	var is_in := str(sel["t"]) == "ilink"; var name := str(sel.get("name", "")); var pop := str(sel.get("pop", ""))
+	var names: Array = sel.get("names", [name])
+	var from_to := ("%s > %s" % [name if names.size() <= 1 else "%s (%d)" % [name, names.size()], pop]) if is_in else ("%s > %s" % [pop, name])
+	add(head(from_to, Kit.SENSOR if is_in else Gfx.VIOLET, "link from a sensor to a cell" if is_in else "link from a cell to a motor"))
+	if Circuits.has_locks(lab.circuit):
+		add(Kit.label(Circuits.LOCK_IO, small, Kit.TEXT_SOFT, true)); return
+	add(Kit.label(("This link carries the signal of %s into %s. Disconnect it to cut the signal." % [name, pop]) if is_in else ("This link carries the spikes of %s to %s. Disconnect it to cut the output." % [pop, name]), small, Kit.TEXT_SOFT, true))
+	add(Kit.ident(Kit.btn("Disconnect", func(): lab.editor.delete_selected(), "danger", 18), "BtnDisconnect"))
 
 func inspect_channel(key: String, name: String, small: int) -> void:
 	var circuit := lab.circuit; var tele := lab.tele

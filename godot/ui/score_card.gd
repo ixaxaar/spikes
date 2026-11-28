@@ -6,7 +6,12 @@ extends Control
 var tele: Telemetry = null
 var _was_passed := false
 var guilty := ""                   # v0.3 verdict highlight: the score part the failed verdict is about gets a red outline (in Details)
-var check_text := ""               # v0.3 instant check: the last check's result, shown beside the status chip
+var check_text := ""               # v0.3 instant check: the last Check's result ("Check: 4 of 5 worlds passed, score 82."), the first row of the card
+var check_verdict := ""            # ... and what it says to change (the verdict of the first world that missed)
+var check_ok := false              # ... the Check passed (its row is marked met)
+var lab = null                     # the LabScreen: the buttons that go on after a pass (Next level, Results, Lesion lab, Analysis) call into it
+var _acts: HBoxContainer = null    # those buttons, inside the card (the card never changes size: a result must not move the lab)
+var _acts_sig := ""
 var _pulse := -1.0                 # seconds since the score first passed (the stamp lands)
 var details := false               # Details open: the raw parts (human labels) replace the criteria rows
 var _details_btn: Button
@@ -23,10 +28,42 @@ func _ready() -> void:
 	add_child(_details_btn)
 	resized.connect(_place_btn); _place_btn()
 
+## The ways on after a pass, as [text, id, kind, callback]: Next level when there is one, Results, the Lesion lab and Analysis once the level opens them.
+func _acts_wanted() -> Array:
+	var out := []
+	if lab == null or not is_instance_valid(lab) or tele == null or tele.task == null or _bare() or not bool(lab._rec_pass) or lab.lesion_on: return out
+	var tid: String = lab.task_id
+	var nx := Progress.next_task(tid)
+	if nx != "": out.append(["Next level →", "BtnScoreNext", "amber", func(): lab.app.open_lab(nx)])
+	if not lab._is_reference(): out.append(["Results", "BtnScoreResults", "panel", func(): lab.layout.histo_show()])
+	if lab._lesion_ok(): out.append(["Lesion lab", "BtnScoreLesionLab", "panel", func(): lab.les.open()])
+	if LabUnlocks.has(tid, "analysis"): out.append(["Analysis", "BtnScoreAnalysis", "panel", func(): lab._open_analysis()])
+	return out
+
+func _sync_actions() -> void:
+	var want := _acts_wanted()
+	var ids := []
+	for a in want: ids.append(str(a[1]))
+	var sig := ",".join(ids) + "/" + str(Layout.kind)
+	if sig == _acts_sig: return
+	_acts_sig = sig
+	if _acts != null and is_instance_valid(_acts): _acts.queue_free()
+	_acts = null
+	if want.is_empty(): queue_redraw(); return
+	_acts = HBoxContainer.new(); _acts.add_theme_constant_override("separation", 8); Kit.ident(_acts, "ScoreActions")
+	for a in want:
+		var b := Kit.btn(str(a[0]), a[3], str(a[2]), 15 if not Layout.phone else 14, Vector2(0, 30)); Kit.ident(b, str(a[1])); _acts.add_child(b)
+	add_child(_acts); _place_btn(); queue_redraw()
+
+func _acts_h() -> float: return _acts.get_combined_minimum_size().y if _acts != null and is_instance_valid(_acts) and not _acts.is_queued_for_deletion() else 0.0
+
 func _place_btn() -> void:
 	if _details_btn == null: return
 	var ms := _details_btn.get_combined_minimum_size(); _details_btn.size = Vector2(ms.x, 30.0)
 	_details_btn.position = Vector2(size.x - _details_btn.size.x - 8.0, 6.0)
+	if _acts != null and is_instance_valid(_acts):
+		var am := _acts.get_combined_minimum_size(); _acts.size = am
+		_acts.position = Vector2(maxf(size.x - am.x - 8.0, 4.0), size.y - am.y - 5.0)
 
 func toggle_details() -> void:
 	details = not details
@@ -42,6 +79,7 @@ func _process(dt: float) -> void:
 		_pulse += dt
 		if _pulse > 1.4: _pulse = -1.0
 	if _details_btn != null: _details_btn.visible = tele != null and tele.task != null and not _bare()
+	_sync_actions()
 	if is_visible_in_tree(): queue_redraw()
 
 func _bare() -> bool:
@@ -167,9 +205,9 @@ func _draw() -> void:
 	# header: status, check result, stars (22 px gamboge), Details
 	var status := "NO TASK"
 	if has_task:
-		status = "PASSED" if passed else ("RUNNING" if (tele.running and not tele.finished) else ("FINISHED: NOT PASSED" if tele.finished else "PAUSED"))
+		status = "PASSED" if passed else ("RUNNING" if (tele.running and not tele.finished) else ("FINISHED: NOT PASSED" if tele.finished else ("PRESS RUN" if tele.t_ms <= 0.0 else "PAUSED")))
 		if tele.sim == null or bare: status = "BUILD A CIRCUIT"
-	var scol := Kit.success() if passed else (Kit.TEXT_SOFT if status in ["RUNNING", "PAUSED", "BUILD A CIRCUIT", "NO TASK"] else Kit.RED)
+	var scol := Kit.success() if passed else (Kit.TEXT_SOFT if status in ["RUNNING", "PAUSED", "PRESS RUN", "BUILD A CIRCUIT", "NO TASK"] else Kit.RED)
 	var sw := fb.get_string_size(status, HORIZONTAL_ALIGNMENT_LEFT, -1, fz).x + 16.0
 	var hy := 10.0
 	draw_rect(Rect2(x, hy, sw, float(fz) + 8.0), Color(scol, 0.08)); draw_rect(Rect2(x, hy, sw, float(fz) + 8.0), scol, false, 1.4)
@@ -179,20 +217,21 @@ func _draw() -> void:
 	if has_task:
 		var st := int(Progress.best(str(tele.task.id()))["stars"])
 		for i in 3: draw_star(Vector2(stars_x + 12.0 + 25.0 * float(i), hy + float(fz) * 0.5 + 4.0), 11.0, Kit.GAMBOGE if i < st else Color(Kit.LINE, 0.95))
-	if check_text != "" and has_task: draw_string(f, Vector2(x + sw + 10.0, hy + float(fz) + 1.0), check_text, HORIZONTAL_ALIGNMENT_LEFT, maxf(stars_x - x - sw - 18.0, 10.0), fz, Kit.TEXT_SOFT)
 	var top := hy + float(fz) + 16.0
 	if not has_task: return
 	if bare:
 		draw_multiline_string(f, Vector2(x, top + float(fz)), "Add neurons and wire a sensor to a motor: the score starts when something runs.", HORIZONTAL_ALIGNMENT_LEFT, w, fz, 2, Kit.TEXT_SOFT)
 		return
 	var line_h := float(fz) + 9.0
-	var rows_max := maxi(1, int((size.y - top - 4.0) / line_h))
+	var rows_max := maxi(1, int((size.y - top - 4.0 - (_acts_h() + 6.0 if _acts_h() > 0.0 else 0.0)) / line_h))
 	if details: _draw_details(x, top, w, rows_max, passed)
 	else: _draw_criteria(x, top, w, rows_max, line_h)
 
 func _draw_criteria(x: float, top: float, w: float, rows_max: int, line_h: float) -> void:
 	var fz := Kit.fs(14); var f := Fonts.regular; var fm := Fonts.bold
 	var rows := criteria(tele)
+	if check_verdict != "" and check_text != "": rows.push_front({"mark": "wait", "text": check_verdict})
+	if check_text != "": rows.push_front({"mark": "ok" if check_ok else "bad", "text": check_text})   # the Check result leads: the card is where it is read
 	var y := top
 	for i in mini(rows.size(), rows_max):
 		var row: Dictionary = rows[i]; var m := str(row["mark"])

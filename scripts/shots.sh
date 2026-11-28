@@ -10,7 +10,8 @@ godot --headless --path . --import >/dev/null 2>&1
 out=${OUT:-$root/docs/screenshots}; mkdir -p "$out"   # OUT=<dir> writes the shots elsewhere
 SS=${SS:-1}
 tmp=$(mktemp -d); trap 'rm -rf "$tmp" override.cfg' EXIT
-export SP_NOAUTOSAVE=1 SP_NODISPLAY=1 SP_NOTHROTTLE=1 SP_BUDGET_US=${SP_BUDGET_US:-200000}
+# a level never starts a run by itself; the shots show one running (SP_RUN starts it at once)
+export SP_RUN=1 SP_NOAUTOSAVE=1 SP_NODISPLAY=1 SP_NOTHROTTLE=1 SP_BUDGET_US=${SP_BUDGET_US:-200000}
 im=$(command -v magick || command -v convert || true)
 run_godot() {
   if [ -z "${DISPLAY:-}" ] || [ "${SP_SHOTS_GL:-0}" = 1 ]; then

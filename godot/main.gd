@@ -80,6 +80,7 @@ func _ready() -> void:
 ## Screenshots of the analysis screen need a circuit that has run: open the lab on SP_TASK, let it run, then show the analysis of it.
 func _analysis_demo() -> void:
 	open_lab(OS.get_environment("SP_TASK") if OS.get_environment("SP_TASK") != "" else "lamprey", true, true)
+	_press_run()
 	await get_tree().create_timer(3.5).timeout
 	var lab := screen as LabScreen
 	if lab != null: open_analysis(lab.circuit, lab.tele, lab.task_id)
@@ -238,6 +239,11 @@ var _fails := 0
 func _check(ok: bool, msg: String) -> void:
 	if not ok: _fails += 1; printerr("SMOKE FAIL: ", msg)
 
+## The smoke starts a run the way a player does (Run); a level never starts one by itself.
+func _press_run() -> void:
+	var l := screen as LabScreen
+	if l != null and l.tele != null and l.tele.sim != null and not l.tele.running: l._toggle_run()
+
 func _frames(n := 2) -> void:
 	for i in n: await get_tree().process_frame
 
@@ -356,13 +362,23 @@ func _lab_checks() -> void:
 		var lab := screen as LabScreen
 		_check(lab != null and lab.tele.sim != null, "lab: %s reference circuit did not load%s" % [id, (" (" + lab.tele.error + ")") if lab != null else ""])
 		if lab == null or lab.tele.sim == null: continue
-		_check(lab.tele.t_ms > 0.0, "lab: %s did not advance" % id)
+		_check(lab.tele.t_ms == 0.0 and not lab.tele.running, "lab: %s started a run by itself when it opened (t %.0f ms)" % [id, lab.tele.t_ms])   # a run is started by the player: Run
+		_press_run(); await _frames(30)
+		_check(lab.tele.t_ms > 0.0, "lab: %s did not advance after Run" % id)
 		await get_tree().create_timer(0.6).timeout
 		if id != "reflex" and str(Campaign.info(id)["view"]) == "polyline": _check(lab.tele.total_spikes > 0, "lab: %s produced no spikes in the lab view" % id)   # a reflex arc is quiet until the first poke at 1.5 s
 		var n0 := lab.tele.n
 		var nid := Circuits.add_neuron(lab.circuit, "iaf_psc_alpha", 0, Vector2(100, 400), "I"); lab.editor.select({"t": "pop", "id": nid}); lab._on_structure()
 		await get_tree().create_timer(0.5).timeout
 		_check(lab.tele.sim != null and lab.tele.n == n0 + 1, "lab: %s edit did not reload (n %d -> %d)" % [id, n0, lab.tele.n])
+		_check(lab.tele.t_ms == 0.0 and not lab.tele.running, "lab: %s an edit during a run did not stop it at t = 0 (t %.0f ms, running %s)" % [id, lab.tele.t_ms, str(lab.tele.running)])
+		_check(lab.run_btn.text == "Run" and lab._stale, "lab: %s Run is not marked after an edit" % id)
+		var tl: Array = Campaign.info(id)["timeline"]   # nothing in the lab moves while an event comes and goes: the event row has one height for the whole run
+		if not tl.is_empty():
+			var t_keep: float = lab.tele.t_ms; var bh := []
+			for tt in [0.0, float(tl[0]["t_ms"]) + 1.0, float(tl[0]["t_ms"]) + float(tl[0]["dur_ms"]) + 50.0]: lab.tele.t_ms = tt; bh.append(BodyViews._banner_h(lab.tele))
+			lab.tele.t_ms = t_keep
+			_check(bh[0] > 0.0 and bh[0] == bh[1] and bh[1] == bh[2], "lab: %s the event row changes height while an event is on (%s)" % [id, str(bh)])
 		small_fonts_total += _small_fonts(screen)
 	cur = ""; show_screen("title", false, true); await _frames()
 
@@ -419,6 +435,7 @@ func _v02_checks() -> void:
 		var lab := screen as LabScreen
 		_check(lab != null and lab.tele.sim != null, "mock %s did not load in the lab" % id)
 		if lab == null or lab.tele.sim == null: continue
+		_press_run()
 		await get_tree().create_timer(0.8).timeout
 		_check(lab.tele.hist_t.size() > 3, "mock %s: no readout history" % id)
 		_check(lab.timeline_view.visible, "mock %s: the timeline is hidden" % id)
@@ -523,7 +540,7 @@ func _task_checks() -> void:
 				_check(float(sim.modulator(str(ch["modulator"]))) > 0.0, "tasks: %s modulator output '%s' did not move %s in 2 s" % [id, ch["name"], ch["modulator"]])
 		sim.stop()
 		# 3. the real body view: its readouts exist after 1 s on the reference circuit
-		cur = ""; open_lab(id, true); await _frames(20); await get_tree().create_timer(1.0).timeout
+		cur = ""; open_lab(id, true); await _frames(20); _press_run(); await get_tree().create_timer(1.0).timeout
 		var rlab := screen as LabScreen
 		_check(rlab != null and rlab.tele.sim != null, "tasks: %s reference did not load" % id)
 		if rlab != null and rlab.tele.sim != null:

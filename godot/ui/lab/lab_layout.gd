@@ -76,7 +76,7 @@ func build() -> void:
 	lab.task_view = TaskView.new(); lab.task_view.size_flags_vertical = Control.SIZE_EXPAND_FILL; lab.task_view.size_flags_stretch_ratio = 2.0; world.add_child(lab.task_view)
 	lab.timeline_view = TimelineView.new(); lab.timeline_view.visible = has_tl
 	lab.timeline_view.custom_minimum_size = Vector2(0, TimelineView.wanted_height((info.get("bands", []) as Array).size(), phone) if has_tl else 0.0); world.add_child(lab.timeline_view)
-	lab.score_card = ScoreCard.new(); world.add_child(lab.score_card)
+	lab.score_card = ScoreCard.new(); lab.score_card.lab = lab; world.add_child(lab.score_card)
 	if tid == "":   # the sandbox: no body to draw, so the world panel is the sandbox panel (dials, energy)
 		lab.task_view.visible = false; lab.score_card.visible = false
 		lab.sandbox_panel = SandboxPanel.new().setup(func(): return lab.tele); world.add_child(lab.sandbox_panel)
@@ -112,8 +112,8 @@ func fill_bar() -> void:
 	else:
 		for t in [["circuit", "Circuit"], ["world", "World"], ["scopes_only", "Scopes"]]:
 			var b := Kit.btn(t[1], func(): lab.tab = t[0]; apply_tab(), "panel", bs, Vector2(0, 0)); lab.tab_btns[t[0]] = b; bar.add_child(b)
-	lab.run_btn = Kit.btn("Pause", lab._toggle_run, "amber", bs, Vector2(120 if not phone else 92, 0)); Kit.ident(lab.run_btn, "BtnRun"); bar.add_child(lab.run_btn)
-	bar.add_child(Kit.btn("Reset", func(): lab._restart(), "panel", bs, Vector2(92 if not phone else 70, 0)))
+	lab._run_kind = ""; lab.run_btn = Kit.btn("Run", lab._toggle_run, "panel", bs, Vector2(120 if not phone else 92, 0)); Kit.ident(lab.run_btn, "BtnRun"); bar.add_child(lab.run_btn)
+	bar.add_child(Kit.btn("Reset", func(): lab._restart(false), "panel", bs, Vector2(92 if not phone else 70, 0)))
 	check_btn = null; hint_btn = null
 	if tid != "" and not dxm:
 		check_btn = Kit.btn("Check", lab.play.check_start, "green", bs); bar.add_child(check_btn)
@@ -202,7 +202,7 @@ func _on_command(name: String) -> void:
 	match name:
 		"run": lab._toggle_run()
 		"check": if check_btn != null and is_instance_valid(check_btn) and check_btn.is_visible_in_tree() and not check_btn.disabled: lab.play.check_start()
-		"reset": lab._restart()
+		"reset": lab._restart(false)
 		"inspect": focus_inspector.call_deferred()
 
 ## The first control of the inspector takes the focus (keyboard and pad: Y / I on the bench).
@@ -525,7 +525,8 @@ func _end_text() -> String:
 		elif st < 3 and lab._test_result.has("passes") and int(lab._test_result["passes"]) < int(lab._test_result["n"]): parts.append("It passes the fixed world but not every seed: make it less fragile, then test again.")
 	return "  ".join(parts)
 
-## The card that rises when an episode ends (or a TEST runs): score, stars, best, what to try next, and the buttons that matter.
+## The card of a TEST x5 (the player pressed it): its progress while the five worlds run, then the result with the stars, what to try next, Next level after a pass and Close.
+## A plain run raises no card: its result is on the score card (ScoreCard), with the same ways on.
 func overlay_show(testing := false) -> void:
 	overlay_hide(); close_menu(); close_parts()   # one modal at a time: the card that rises when the run ends closes the More menu and the parts bin
 	var phone := Layout.phone; var tele := lab.tele; var tid := lab.task_id
@@ -567,13 +568,6 @@ func overlay_show(testing := false) -> void:
 	var nx := Progress.next_task(tid)
 	var next_first := passed and nx != ""
 	if next_first: br.add_child(Kit.ident(Kit.btn("Next level →", func(): lab.app.open_lab(nx), "amber", 22), "BtnNextTask"))
-	br.add_child(Kit.btn("Run again", lab._restart, "panel" if next_first else "amber", 20))
-	br.add_child(Kit.btn("Test x5", lab._test_start, "panel", 20))
-	if passed and not ref: br.add_child(Kit.btn("Results", histo_show, "panel", 20))
-	var fails := int(LabScreen._fails.get(tid, 0))
-	if not passed and lab.mode != "researcher" and lab._test_result.is_empty(): br.add_child(Kit.ident(Kit.btn(HintPanel.button_text(lab.mode, fails, int(LabScreen._hint_tier.get(tid, 0))), func(): lab._overlay_dismissed = true; overlay_hide(); lab.play.hint_toggle(), "panel" if HintPanel.available(lab.mode, fails) else "ghost", 20), "BtnHint"))
-	if lab._lesion_ok(): br.add_child(Kit.btn("Lesion lab", lab.les.open, "panel", 20))
-	if LabUnlocks.has(tid, "analysis"): br.add_child(Kit.btn("Analysis", lab._open_analysis, "panel", 20))
 	br.add_child(Kit.btn("Close", func(): lab._overlay_dismissed = true; overlay_hide(), "ghost", 20))
 
 ## The 5-seed test card's progress line.

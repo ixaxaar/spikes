@@ -11,6 +11,17 @@
 - **Silencing control:** a cell type that a level lets you switch off has an active / silenced switch.
 - `make play` downloads the newest CI build and starts it.
 
+### Changed
+- **A run starts only when you press Run** (button, Space or Start). Opening a level and editing the circuit never start one. An edit during a run stops it at the start; the Run button turns amber until you run the new circuit. Run plays a finished run again; Reset goes back to the start and waits.
+- **No card after a run.** The result is on the score card, which carries Next level, Results, Lesion lab and Analysis after a pass. Check writes its result on the score card, not in a toast. The first-pass celebration is a toast and a glow along the path; it no longer slows the run, zooms the bench or stamps over it. The Test x5 result card stays.
+- **The tutorial is rewritten** in plain words: 12 steps (add a cell, wire it, press Run, read the plots, raise the weight, reach a pass, Check, read the result, switch a cell to inhibitory, hints) and the mode picker. The pointers and the mode picker are in the same plain style.
+
+### Fixed
+- Sensor and motor cards can be dragged anywhere on the bench (mouse, touch, Shift + arrow); they stay, are saved with the circuit and undo.
+- A link from a sensor to a cell, or from a cell to a motor, can be selected (click, touch, keyboard or pad cursor) and removed, one at a time, with Delete or the inspector's Disconnect. Locked levels keep their links.
+- The scripted-event row (the "tap" chip on Excitation and the like) is always there while a level has events, so the panels under it no longer jump when an event starts.
+- The tutorial and the mode picker can be done with a gamepad alone: the focus starts on the right control, never lands on a dimmed one, and every button and lit control is reachable.
+
 ### Known gaps
 - The Atlas chapter has no map plate yet and its map nodes sit close together.
 - Locked levels still show the add and connect buttons (they explain why they do nothing) and a neuron-count challenge that does not apply.

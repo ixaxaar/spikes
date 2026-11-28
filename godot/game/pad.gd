@@ -65,6 +65,9 @@ func _focusable(c: Control) -> bool:
 ## Make sure something is focused. `force` re-picks even if something already is.
 func ensure_focus(force: bool) -> void:
 	var cur: Control = app.get_viewport().gui_get_focus_owner()
+	if app.tutorial != null and app.tutorial.wants_focus():   # the tutorial or the mode picker is up: the focus stays on what it lights (never on a dimmed control)
+		if force or cur == null or not app.tutorial.focus_ok(cur): app.tutorial.focus_now()
+		return
 	if cur != null and not force and app.tutorial != null and app.tutorial.is_ancestor_of(cur): return   # the tutorial banner keeps its focus
 	var host: Control = app.current_screen()
 	if host == null: host = app.root

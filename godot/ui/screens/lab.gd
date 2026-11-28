@@ -85,6 +85,8 @@ var _dx_info := {}                 # Task::diagnosis()
 var _ref_cache := {"n": -1, "fp": "", "v": false}
 var _saved_text := ""              # the autosave as last written (an unchanged bench is not rewritten)
 var _saved_ms := -100000           # when the "Saved" tick was last lit
+var _stale := false                # the bench was edited since the last Run was pressed: the result on screen is out of date (the Run button is amber)
+var _run_kind := ""                # the look the Run button has now ("panel" or "amber")
 var _marker_on := false            # circuits/live_<task>.run exists: a live run is in progress (a stall leaves it behind; the next visit opens paused)
 var _paused_open := false          # this visit opened paused because the last live run of this circuit never finished
 
@@ -190,6 +192,7 @@ func _start(tid: String) -> void:
 	if _paused_open and tele != null and tele.sim != null:   # opens paused, with a way forward
 		tele.running = false; _run_marker(false)
 		_banner_raw("The last live run of this circuit never finished (the game was closed or stalled while it ran). It opens paused: press Run to try again, or change the circuit first.")
+	if OS.get_environment("SP_RUN") != "" and tele != null and tele.sim != null: tele.running = true   # dev hook: a run starts at once (a run is otherwise started by the player, with Run)
 	if OS.get_environment("SP_SPEED") == "" and tele.task != null: tele.speed = _default_speed(float(tele.task.duration_ms()), str(Campaign.info(task_id).get("kind", "task")))
 
 ## G3 / v0.3 pacing: the default speed by episode length, from Telemetry.default_speed (it also knows what the machine measured it can deliver).
@@ -356,11 +359,11 @@ func _ensure_task_weights() -> void:
 
 func _reload(first := false) -> void:
 	var keep: Array = tele.watched.duplicate() if tele != null else []
-	var was_running := tele.running if tele != null else true; var sp := tele.speed if tele != null else 1.0
+	var sp := tele.speed if tele != null else 1.0
 	if tele.sim != null: tele.sim.stop()
 	var old_mods: Dictionary = tele.mods.duplicate() if tele != null else {}
 	if celebration != null: celebration.abort()
-	tele = Telemetry.new(); tele.running = was_running; tele.speed = sp; tele.mods = old_mods; tele.mode = mode; tele.variant = variant
+	tele = Telemetry.new(); tele.running = false; tele.speed = sp; tele.mods = old_mods; tele.mode = mode; tele.variant = variant   # a reload opens at t = 0, paused: only the player starts a run (Run)
 	tele.lesioned = lesion_on and not lesions.is_empty()   # the live view runs the lesioned circuit: watch the failure
 	var ok := tele.setup(_live_circuit(), task_id, ext_ok)   # always makes the task, so the world and the brief show even for a half-built circuit
 	if ok and not keep.is_empty() and not first:
@@ -391,6 +394,7 @@ func _on_structure() -> void:
 	if task_id != "" and Time.get_ticks_msec() - _last_edit_ms > 1500: Playlog.event("edit", {"task": task_id})
 	_last_edit_ms = Time.get_ticks_msec()
 	_dirty = 0.0; les.reset(); _surprise_done.erase("osc")
+	_stale = true; _clear_check()   # the circuit changed: a run in progress stops at t = 0 when the engine reloads (_reload); the old Check line is out of date
 	if editor != null: editor.edit_pending()   # one undo step per burst of edits
 	if editor != null: editor.verdict_target = ""
 	if score_card != null: score_card.guilty = ""
@@ -455,22 +459,39 @@ func _sel_audio() -> void:
 	GameAudio.set_spike_focus(f)
 
 func _toggle_run() -> void:
+	if _dirty >= 0.0 and _lrun == null: _dirty = -1.0; _reload(); _build_inspector()   # an edit still waiting for its reload: the run is of the bench as it is now
 	if tele.finished and tele.sim != null: _restart(); return   # a finished episode: Run plays it again
 	tele.running = not tele.running
+	if tele.running: _stale = false; _clear_check()
 	GameAudio.event("run" if tele.running else "pause")
 	if not tele.running: GameAudio.silence_body()
 	_sync_run_btn()
+
+## The Run button reads Pause while a run plays. It is outlined when the result on screen is current and amber when the bench changed since the last run.
 func _sync_run_btn() -> void:
 	if run_btn == null or tele == null: return
 	var t := "Pause" if tele.sim != null and tele.running and not tele.finished and not tele.failed and _test.is_empty() else "Run"   # never "Pause" when nothing runs
 	if run_btn.text != t: run_btn.text = t
-func _restart() -> void:
+	var kind := "amber" if (_stale and t == "Run") else "panel"
+	if kind != _run_kind:
+		_run_kind = kind; Kit.skin(run_btn, kind, int((18 if Layout.phone else 22) * 0.6))
+		run_btn.tooltip_text = "The circuit changed since the last run. Press Run to see how it does now." if kind == "amber" else "Start or pause the run."
+
+## The Check line on the score card goes when the bench changes or a run starts: it belongs to the bench it was made for.
+func _clear_check() -> void:
+	if score_card != null: score_card.check_text = ""; score_card.check_verdict = ""
+
+## Back to t = 0. `run`: the episode plays at once (Run on a finished episode, Run again); false (Reset) leaves it paused at the start.
+func _restart(run := true) -> void:
 	layout.overlay_hide(); _overlay_dismissed = false; _rec_done = false; _rec_pass = false; _fail_shown = false
+	if _dirty >= 0.0 and _lrun == null: _dirty = -1.0; _reload(); _build_inspector()
+	if run: _stale = false
+	_clear_check()
 	if editor != null: editor.verdict_target = ""
 	if score_card != null: score_card.guilty = ""
 	if celebration != null: celebration.abort()
-	GameAudio.event("run")
-	if tele.sim != null: tele.reset(); tele.running = true; _sync_run_btn()
+	GameAudio.event("run" if run else "pause")
+	if tele.sim != null: tele.reset(); tele.running = run; _sync_run_btn()
 	elif tele.task != null: tele.task.reset(int(circuit.get("seed", 1)))
 	task_view.attach(tele)
 
@@ -579,7 +600,7 @@ func _stars_now() -> int:
 	var st := Progress.stars_for(task_id, bool(tele.score.get("passed", false)), false, Circuits.neuron_count(circuit), tele.spike_rate_hz() / maxf(float(Circuits.neuron_count(circuit)), 1.0))
 	return mini(st, 2) if _recipe_used() else st
 
-## Called every frame: record a pass the moment it happens and the final result at the end of the episode; raise the end card; report a stopped run.
+## Called every frame: record a pass the moment it happens and the final result at the end of the episode; report a stopped run.
 func _watch_episode() -> void:
 	if tele == null: return
 	if tele.failed and not _fail_shown: _fail_shown = true; _banner_raw("The simulation stopped: " + tele.error + ". Fix the circuit and press “Reset”.")
@@ -600,7 +621,7 @@ func _watch_episode() -> void:
 		_rec_done = true
 		_record(passed, false)
 		if not passed: play.note_fail()
-		if not _overlay_dismissed and not (app != null and app.tutorial != null and app.tutorial.holds_endcard()): layout.overlay_show()   # Plate 0: the end card would cover the lit control
+		# (no card rises over the bench: the result is on the score card)
 
 ## Record a result: a pass in a challenge variant goes on the variant list (no stars), everything else is the task's own best.
 func _record(passed: bool, five_seeds: bool, mean := -1.0, rate := -2.0) -> void:

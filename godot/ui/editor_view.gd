@@ -9,7 +9,9 @@ extends Control
 ## population outline (with room for its label) is pushed POP_GAP px clear of the others; labels are placed where they hide least, on a paper halo, drawn last;
 ## a self-loop goes on the free side. All of this is display only: the circuit's positions are never changed by it.
 ##
-## Editing: drag a cell to move it (or the whole selection), drag from its rim to another cell to connect, click an axon to edit it, shift-click or drag a box on
+## Editing: drag a cell to move it (or the whole selection), drag a sensor or motor card to move it (kept in the circuit's meta.editor.cards as an offset from where the
+## layout puts it, so it stays put and undo takes it back), drag from a cell's rim to another cell to connect, click an axon to edit it, click the dashed link between a
+## sensor card and a cell, or a cell and a motor card, to select that one link (Delete or the inspector's Disconnect removes it), shift-click or drag a box on
 ## the empty bench to select several, right-click deletes. Ctrl+Z / Ctrl+Shift+Z / Ctrl+Y undo and redo (every structural change, weight or parameter edit and
 ## drag is one step, 100 kept), Ctrl+C / Ctrl+V / Ctrl+D copy, paste and duplicate cells with their internal connections, Ctrl+A selects every group.
 ## View: the wheel or a pinch zooms (ZOOM_MIN .. ZOOM_MAX) around the pointer, middle-drag or Space+drag pans, F fits; the readout in the corner (click: fit).
@@ -39,7 +41,7 @@ const GRID := 64.0                 # hit-test grid cell (px)
 
 var tele: Telemetry = null
 var circuit := {}
-var sel := {}                      # {t:"pop", id} | {t:"proj", i} | {t:"in", name} | {t:"out", name}: what the inspector shows
+var sel := {}                      # {t:"pop", id} | {t:"proj", i} | {t:"in", name} | {t:"out", name} | {t:"ilink" | "olink", name, pop, names}: what the inspector shows (a link: one sensor-to-cell or cell-to-motor connection)
 var msel := {}                     # the selected populations (id -> true); sel is the one of them the inspector shows
 var tool := "select"               # select | connect
 var editable := true
@@ -50,7 +52,7 @@ var _paper: Control                 # behind the editor: the graph paper (redraw
 var _ink: Control                   # behind the editor, above the paper: axons and resting cells, drawn once per geometry (pan and zoom move it as a transform)
 var _gen := 0                       # bumped at every geometry rebuild: the ink layer's cache key
 var _ink_key := []; var _paper_key := []
-var _drag := {}                    # {mode: move|connect|pan|band, ...}
+var _drag := {}                    # {mode: move|cardmove|connect|pan|band, ...}
 var _connect_from := {}            # tool == connect: the first tap
 var _cards_g := {}                   # channel card rects (scaled space) by "in:name" / "out:name" (a member of a closed bus: the bus card)
 var _rg := 20.0                     # cell radius in geometry space (on screen: _rg times the view's zoom)
@@ -202,6 +204,12 @@ func _sel_exists(s: Dictionary) -> bool:
 		"in", "out":
 			for ch in circuit.get("inputs" if s["t"] == "in" else "outputs", []):
 				if str(ch.get("name", "")) == str(s.get("name", "")): return true
+		"ilink", "olink":
+			var is_in: bool = str(s["t"]) == "ilink"
+			for ch in circuit.get("inputs" if is_in else "outputs", []):
+				if str(ch.get("name", "")) != str(s.get("name", "")): continue
+				for x in ch.get("targets" if is_in else "neurons", []):
+					if str(Circuits.proj_pop(x)) == str(s.get("pop", "")): return true
 	return false
 
 # ---------- undo / redo ----------
@@ -541,6 +549,9 @@ func _build(shapes_only := false) -> Dictionary:
 			var cc := _card_centre(list.size(), i, side, xl if side < 0 else xr, cy, pitch)
 			var r := Rect2(cc - cs * 0.5, cs)
 			if str(it["type"]) == "head": r = Rect2(Vector2(r.position.x, r.end.y - card_h * 0.55), Vector2(cs.x, card_h * 0.55))
+			else:
+				var coff := _card_off(str(it["key"])) * view_scale   # a card the player moved: where the layout puts it, plus the offset kept in the circuit
+				if coff != Vector2.ZERO: r.position += coff; it["moved"] = true
 			it["rect"] = r; it["col"] = _card_col_index(list.size(), i, side)
 			items.append(it)
 			if str(it["type"]) != "head":
@@ -598,7 +609,7 @@ func _build(shapes_only := false) -> Dictionary:
 			var pd: Dictionary = P[ix[pid]]
 			var a := Vector2(r.end.x, r.get_center().y) if is_in else Vector2(r.position.x, r.get_center().y)
 			var pre := PackedVector2Array([a])
-			if int(it["col"]) > 0:   # an outer column: out through the gap under this card, past the inner columns
+			if int(it["col"]) > 0 and not bool(it.get("moved", false)):   # an outer column: out through the gap under this card, past the inner columns
 				var gx := (bb.position.x - 48.0 - card_w) if is_in else (bb.end.x + 48.0 + card_w)
 				var gy := r.end.y + (pitch - card_h) * 0.5
 				var sx := a.x + (7.0 if is_in else -7.0)
@@ -889,12 +900,14 @@ func _draw() -> void:
 					var ch := _chan("inputs", str(nm))
 					if float(ch.get("value", 0.0)) > 0.0: act = 1.0; break
 			var selected: bool = sel.get("t", "") == "in" and (it["names"] as Array).has(sel.get("name", ""))
+			if _link_is(sel, e) or _link_is(_hover, e): draw_polyline(pts, Color(Kit.GAMBOGE, 0.42 if _link_is(sel, e) else 0.24), w + 8.0, true)   # the chosen link under a highlighter stroke
 			Gfx.dashed(self, pts, Color(Kit.SENSOR, 0.55 + 0.3 * act + (0.15 if selected else 0.0)), w + (0.6 if selected else 0.0), 6.0, 5.0, now * 26.0 * act if Kit.motion() else 0.0)
 			Gfx.arrow_head(self, pts[pts.size() - 1], pts[pts.size() - 1] - pts[pts.size() - 2], Color(Kit.SENSOR, 0.9), 8.0)
 		else:
 			var rate := 0.0
 			if tele != null:
 				for nm in it["names"]: rate = maxf(rate, float(tele.rates.get(str(nm), 0.0)))
+			if _link_is(sel, e) or _link_is(_hover, e): draw_polyline(pts, Color(Kit.GAMBOGE, 0.42 if _link_is(sel, e) else 0.24), w + 8.0, true)
 			Gfx.dashed(self, pts, Color(Kit.MOTOR, 0.55 + clampf(rate / 80.0, 0.0, 0.4)), w, 6.0, 5.0, -now * 26.0 * clampf(rate / 40.0, 0.0, 1.0) if Kit.motion() else 0.0)
 			Gfx.arrow_head(self, pts[pts.size() - 1], pts[pts.size() - 1] - pts[pts.size() - 2], Color(Kit.MOTOR, 0.9), 8.0)
 	# --- projections
@@ -1000,6 +1013,11 @@ func _draw() -> void:
 		if hi - lo > size.x * 0.7: lo = size.x * 0.15; hi = size.x * 0.85
 		var hw := maxf(hi - lo, 160.0)
 		draw_multiline_string(font, Vector2(lo, size.y * 0.16), "An empty bench. Press “+ Excitatory” above to add a neuron, then drag from a sensor card to it and from it to a motor card.", HORIZONTAL_ALIGNMENT_CENTER, hw, Kit.fs(18), 6, Kit.TEXT_SOFT)
+
+## Is the selection / hover `h` the link drawn by geometry edge `e`?
+func _link_is(h: Dictionary, e: Dictionary) -> bool:
+	if str(h.get("t", "")) != ("ilink" if bool(e["in"]) else "olink"): return false
+	return str(h.get("pop", "")) == str(e["pid"]) and ((e["item"] as Dictionary)["names"] as Array).has(h.get("name", ""))
 
 func _chan(key: String, name: String) -> Dictionary:
 	for ch in circuit.get(key, []):
@@ -1181,6 +1199,11 @@ func _chan_act(side: String, name: String) -> float:
 
 func _draw_cursor(h: Dictionary) -> void:
 	var r := _anchor_rect(h, false)
+	if str(h.get("t", "")) in ["ilink", "olink"]:
+		for eo in _geo().get("edges", []):
+			if _same(_link_hit(eo), h):
+				draw_polyline(eo["pts"], Color(Kit.GAMBOGE, 0.9), 9.0, true); draw_polyline(eo["pts"], Color(Gfx.INK, 0.9), 2.0, true)
+		return
 	if str(h.get("t", "")) == "proj":
 		var g := _geo(); var ax: Array = g.get("axons", [])
 		var i := int(h.get("i", -1))
@@ -1206,6 +1229,9 @@ func _anchor_rect(h: Dictionary, screen := true) -> Rect2:
 ## The editor-local point a wire leaves from or lands on for a hit element.
 func _anchor(h: Dictionary) -> Vector2:
 	if str(h.get("t", "")) == "proj": return proj_mid(int(h.get("i", -1)))
+	if str(h.get("t", "")) in ["ilink", "olink"]:
+		var lm := link_mid("in" if str(h["t"]) == "ilink" else "out", str(h.get("name", "")), str(h.get("pop", "")))
+		return lm if lm != Vector2.INF else Vector2(-1e9, -1e9)
 	var r := _anchor_rect(h)
 	if r.size == Vector2.ZERO: return Vector2(-1e9, -1e9)
 	if str(h.get("t", "")) == "in": return Vector2(r.end.x, r.get_center().y)
@@ -1373,7 +1399,60 @@ func _hit(p: Vector2) -> Dictionary:
 				for k in range(1, pts.size()):
 					var d2 := Geometry2D.get_closest_point_to_segment(q, pts[k - 1], pts[k]).distance_to(q)
 					if d2 < bdist: bdist = d2; bpj = pj
-	return {"t": "proj", "i": bpj} if bpj >= 0 else {}
+	if bpj >= 0: return {"t": "proj", "i": bpj}
+	if not editable: return {}
+	var best_e := -1; var ed_d := 9.0   # the dashed links between a sensor card and a cell, a cell and a motor card
+	var edges: Array = g["edges"]
+	for ei in edges.size():
+		var epts: PackedVector2Array = edges[ei]["pts"]
+		for k in range(1, epts.size()):
+			var d3 := Geometry2D.get_closest_point_to_segment(q, epts[k - 1], epts[k]).distance_to(q)
+			if d3 < ed_d: ed_d = d3; best_e = ei
+	if best_e >= 0: return _link_hit(edges[best_e])
+	return {}
+
+## The hit dictionary of a channel link (one entry of the geometry's "edges").
+func _link_hit(eo: Dictionary) -> Dictionary:
+	var nms: Array = (eo["item"] as Dictionary)["names"]
+	return {"t": "ilink" if bool(eo["in"]) else "olink", "name": str(nms[0]), "pop": str(eo["pid"]), "names": nms}
+
+# ---------- card positions ----------
+## The offset (model units) the player moved a card by: meta.editor.cards = {"in:<name>" | "out:<name>" | "bus:in:<stem>": [dx, dy]}, relative to where the layout puts it.
+func _card_off(key: String) -> Vector2:
+	var meta: Variant = circuit.get("meta", {})
+	if not meta is Dictionary: return Vector2.ZERO
+	var ed: Variant = (meta as Dictionary).get("editor", {})
+	if not ed is Dictionary: return Vector2.ZERO
+	var co: Variant = (ed as Dictionary).get("cards", {})
+	if not co is Dictionary or not (co as Dictionary).has(key): return Vector2.ZERO
+	var a: Variant = (co as Dictionary)[key]
+	return Vector2(float(a[0]), float(a[1])) if a is Array and (a as Array).size() >= 2 else Vector2.ZERO
+
+func _set_card_off(key: String, v: Vector2) -> void:
+	if not circuit.get("meta", {}) is Dictionary: circuit["meta"] = {}
+	var meta: Dictionary = circuit["meta"]
+	if not meta.get("editor", {}) is Dictionary: meta["editor"] = {}
+	var ed: Dictionary = meta["editor"]
+	if not ed.get("cards", {}) is Dictionary: ed["cards"] = {}
+	var co: Dictionary = ed["cards"]
+	if v.length() < 0.01: co.erase(key)
+	else: co[key] = [v.x, v.y]
+	if co.is_empty(): ed.erase("cards")
+
+## The key a selected sensor or motor card is moved by ("" when none is selected).
+func _sel_card_key() -> String:
+	for it in _geo().get("items", []):
+		if str(it["type"]) == "head" or str(it["side"]) != str(sel.get("t", "")): continue
+		if (it["names"] as Array).has(sel.get("name", "")): return str(it["key"])
+	return ""
+
+## The editor-local midpoint of the link a sensor ("in") or motor ("out") card has to the group `pop` (for overlays and tests); INF when there is none.
+func link_mid(side: String, name: String, pop: String) -> Vector2:
+	for eo in _geo().get("edges", []):
+		if bool(eo["in"]) == (side == "in") and str(eo["pid"]) == pop and ((eo["item"] as Dictionary)["names"] as Array).has(name):
+			var pts: PackedVector2Array = eo["pts"]
+			return _g2s(pts[pts.size() / 2])
+	return Vector2.INF
 
 # ---------- input ----------
 func _gui_input(e: InputEvent) -> void:
@@ -1399,6 +1478,13 @@ func _on_motion(e: InputEventMouseMotion) -> void:
 		if editable:
 			for id in _drag["ids"]: _move_pop(str(id), d)
 			_drag["moved"] = true; _rev += 1
+		queue_redraw()
+	elif mode == "cardmove":
+		if editable:
+			if not bool(_drag["moved"]) and (e.position - (_drag["start"] as Vector2)).length() > 4.0: _drag["moved"] = true   # a click is not a move
+			if bool(_drag["moved"]):
+				var dm: Vector2 = (e.position - (_drag["last"] as Vector2)) / view_scale; _drag["last"] = e.position
+				_set_card_off(str(_drag["key"]), _card_off(str(_drag["key"])) + dm); _rev += 1
 		queue_redraw()
 	elif mode == "connect": _drag["to"] = e.position; queue_redraw()
 	elif mode == "band": _drag["to"] = e.position; queue_redraw()
@@ -1501,11 +1587,15 @@ func _press(p: Vector2, shift := false) -> void:
 		if editable and ((h["t"] == "in" and p.x > r.end.x - 26.0) or (h["t"] == "out" and p.x < r.position.x + 26.0)):
 			select(h); _drag = {"mode": "connect", "src": h, "from_pt": Vector2(r.end.x, r.get_center().y) if h["t"] == "in" else Vector2(r.position.x, r.get_center().y), "to": p}
 			return
-		_toggle_bus(h); select(h); return
+		select(h)
+		if editable: _drag = {"mode": "cardmove", "key": str(h["key"]), "last": p, "start": p, "moved": false, "toggle": h}   # a click opens or folds the bus, a drag moves its card
+		else: _toggle_bus(h)
+		return
 	select(h)
 	if h["t"] == "in" and editable and h["name"] != "":
 		var r2: Rect2 = _g2s_rect(_cards_g["in:" + str(h["name"])])
-		if p.x > r2.end.x - 26.0: _drag = {"mode": "connect", "src": h, "from_pt": Vector2(r2.end.x, r2.get_center().y), "to": p}
+		if p.x > r2.end.x - 26.0: _drag = {"mode": "connect", "src": h, "from_pt": Vector2(r2.end.x, r2.get_center().y), "to": p}; return
+	if editable and (h["t"] == "in" or h["t"] == "out") and h.has("key"): _drag = {"mode": "cardmove", "key": str(h["key"]), "last": p, "start": p, "moved": false}   # a sensor or motor card is dragged anywhere
 
 func _release(p: Vector2, shift := false) -> void:
 	var mode := str(_drag.get("mode", ""))
@@ -1513,6 +1603,9 @@ func _release(p: Vector2, shift := false) -> void:
 		var tgt := _hit(p)
 		if not tgt.is_empty(): _make_link(_drag["src"], tgt)
 	elif mode == "move" and bool(_drag.get("moved", false)): _drag = {}; commit_now(); moved.emit()
+	elif mode == "cardmove":
+		if bool(_drag.get("moved", false)): _drag = {}; commit_now(); moved.emit()   # one undo step; saved with the circuit
+		elif _drag.has("toggle"): _toggle_bus(_drag["toggle"])
 	elif mode == "band":
 		var br := Rect2(_drag["from"], Vector2.ZERO).expand(p)
 		if br.size.length() > 6.0: _band_select(br, bool(_drag.get("add", false)) or shift)
@@ -1591,7 +1684,7 @@ func select(h: Dictionary) -> void:
 	var s := {}
 	if not h.is_empty():
 		s = {"t": h["t"]}
-		for k in ["id", "i", "name"]:
+		for k in ["id", "i", "name", "pop", "names"]:
 			if h.has(k): s[k] = h[k]
 	msel = {str(s["id"]): true} if str(s.get("t", "")) == "pop" else {}
 	if s == sel: queue_redraw(); return
@@ -1626,6 +1719,9 @@ func delete_selected() -> void:
 		"proj":
 			if Circuits.is_locked(circuit["projections"][int(sel["i"])]): note(Circuits.LOCK_PROJ, 6.0); return
 			circuit["projections"].remove_at(int(sel["i"]))
+		"ilink", "olink":   # one link: the sensor or motor stays, the cell stays, only this connection goes
+			if Circuits.has_locks(circuit): note(Circuits.LOCK_IO, 6.0); return
+			_unlink(sel)
 		"in":
 			if not is_free_input(str(sel["name"])): return   # a task's sensors stay
 			var keep := []
@@ -1634,6 +1730,19 @@ func delete_selected() -> void:
 			circuit["inputs"] = keep
 		_: return
 	sel = {}; msel = {}; selection_changed.emit(sel); structure_changed.emit(); queue_redraw()
+
+## Remove the link `l` ({t: "ilink" | "olink", names, pop}): the group `pop` leaves the targets of the sensor (or the neurons of the motor) card, every member of a bus card.
+func _unlink(l: Dictionary) -> void:
+	var is_in := str(l.get("t", "")) == "ilink"
+	var names: Array = l.get("names", [l.get("name", "")])
+	for nm in names:
+		var ch := _chan("inputs" if is_in else "outputs", str(nm))
+		if ch.is_empty(): continue
+		var key := "targets" if is_in else "neurons"
+		var keep := []
+		for x in ch.get(key, []):
+			if str(Circuits.proj_pop(x)) != str(l.get("pop", "")): keep.append(x)
+		ch[key] = keep
 
 ## True for an input the player added (noise): not one of the task's sensors.
 func is_free_input(name: String) -> bool:
@@ -1759,6 +1868,9 @@ func _on_key_focused(e: InputEventKey) -> void:
 		if e.shift_pressed and editable and not selected_pops().is_empty():
 			for id in selected_pops(): _move_pop(str(id), dir * 10.0 / maxf(view_scale, 0.3))
 			_rev += 1; commit_now(); moved.emit(); queue_redraw(); accept_event(); return
+		if e.shift_pressed and editable and str(sel.get("t", "")) in ["in", "out"] and _sel_card_key() != "":   # Shift + arrows also nudges a selected sensor or motor card
+			var ck := _sel_card_key()
+			_set_card_off(ck, _card_off(ck) + dir * 10.0 / maxf(view_scale, 0.3)); _rev += 1; commit_now(); moved.emit(); queue_redraw(); accept_event(); return
 		if cursor_move(dir): accept_event()
 		return
 	match e.keycode:
@@ -1796,6 +1908,10 @@ func _nav_items() -> Array:
 		if (ax[pj] as Dictionary).is_empty(): continue
 		var cp: PackedVector2Array = ax[pj]["cp"]
 		out.append({"h": {"t": "proj", "i": pj}, "p": Gfx.bez(cp[0], cp[1], cp[2], cp[3], 0.5)})
+	if editable:   # the links between a sensor card and a cell, a cell and a motor card: the cursor reaches them like axons
+		for eo in g.get("edges", []):
+			var epts: PackedVector2Array = eo["pts"]
+			out.append({"h": _link_hit(eo), "p": epts[epts.size() / 2]})
 	return out
 
 func _item_hit(it: Dictionary) -> Dictionary:
@@ -1808,6 +1924,7 @@ func _same(a: Dictionary, b: Dictionary) -> bool:
 	match str(a["t"]):
 		"pop": return str(a.get("id", "")) == str(b.get("id", ""))
 		"proj": return int(a.get("i", -1)) == int(b.get("i", -2))
+		"ilink", "olink": return str(a.get("name", "")) == str(b.get("name", "")) and str(a.get("pop", "")) == str(b.get("pop", "-"))
 	return str(a.get("key", a.get("name", ""))) == str(b.get("key", b.get("name", "")))
 
 func _cursor_index(items: Array) -> int:
@@ -1818,7 +1935,7 @@ func _cursor_index(items: Array) -> int:
 func _cursor_start(items: Array) -> int:
 	if not sel.is_empty():
 		for i in items.size():
-			if _same(items[i]["h"], sel if not sel.has("name") else {"t": sel["t"], "name": sel["name"], "key": str(sel["t"]) + ":" + str(sel["name"])}): return i
+			if _same(items[i]["h"], sel if (not sel.has("name") or str(sel["t"]) in ["ilink", "olink"]) else {"t": sel["t"], "name": sel["name"], "key": str(sel["t"]) + ":" + str(sel["name"])}): return i
 	for i in items.size():
 		if str(items[i]["h"]["t"]) == "pop": return i
 	return 0
@@ -1845,7 +1962,7 @@ func cursor_move(dir: Vector2) -> bool:
 		var cs := v.dot(dir) / l
 		if cs < 0.5: continue
 		var s := l * (1.0 + 2.0 * (1.0 - cs))
-		if str(items[j]["h"]["t"]) == "proj": s *= 1.6   # cells and cards before the axons between them
+		if str(items[j]["h"]["t"]) in ["proj", "ilink", "olink"]: s *= 1.6   # cells and cards before the axons and links between them
 		if s < bs: bs = s; best = j
 	if best < 0: return false
 	_set_cursor(items[best]["h"]); return true

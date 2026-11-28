@@ -154,12 +154,18 @@ static func _tile(c: Control, r: Rect2, cap: String, val: String, col: Color, bi
 
 static func _tile_h(big := 30) -> float: return float(Kit.fs(big)) + float(Kit.fs(14)) + 18.0
 
-## The scripted event that is on now, as an amber chip at the top-left of r. Returns the height it took.
+## The height of the event slip row: the same for the whole run (it is there whenever the task has scripted events, whether one is on or not), so that nothing under it moves
+## when an event starts or ends. 0 for a task with no events.
+static func _banner_h(t: Telemetry) -> float:
+	return float(Kit.fs(14)) + 16.0 if not (Campaign.info(str(t.task.id()))["timeline"] as Array).is_empty() else 0.0
+
+## The scripted event that is on now, as an amber chip at the top-left of r. Returns the height of its row, which does not change while the run plays (_banner_h): the row is
+## empty between events.
 static func _banner(c: Control, t: Telemetry, r: Rect2) -> float:
 	var fz := Kit.fs(14); var info := Campaign.info(str(t.task.id())); var banner := ""
 	for e in info["timeline"]:
 		if t.t_ms >= float(e["t_ms"]) and t.t_ms <= float(e["t_ms"]) + float(e["dur_ms"]): banner = str(e["label"])
-	if banner == "": return 0.0
+	if banner == "": return _banner_h(t)
 	var bw := Fonts.bold.get_string_size(banner.to_upper(), HORIZONTAL_ALIGNMENT_LEFT, -1, fz).x + 24.0
 	var br := Rect2(r.position.x, r.position.y, bw, float(fz) + 10.0)   # an event slip: ink-filled label with a sienna offset, like the primary button
 	c.draw_rect(Rect2(br.position + Vector2(3, 3), br.size), Kit.exc()); c.draw_rect(br, Kit.INK)

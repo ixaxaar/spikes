@@ -71,6 +71,7 @@ func _run(app_: Node) -> void:
 		if only != "" and not str(e["id"]).contains(only): seen_edges[e["id"]] = true; continue
 		await _walk_edge(e)
 	for n in g.get("negatives", []): await _negative(n)
+	await _pad_tutorial()
 	_coverage()
 	var secs := (Time.get_ticks_msec() - t0) / 1000.0
 	print("UIGRAPH walked %d edges, %d nodes seen of %d, %d negatives, %d world resets, %d clicks (%d emitted instead), %.0f s" % [seen_edges.size(), seen_nodes.size(), nodes.size(), g.get("negatives", []).size(), world_resets, clicks, synthetic, secs])
@@ -308,6 +309,14 @@ func _detect(nid: String) -> bool:
 		if str(d["find"]) == "FileDlg": return lab._file_dlg != null and lab._file_dlg.visible
 		var c := _find(str(d["find"]), lab, false)
 		if c == null or not c.is_visible_in_tree(): return false
+	if d.has("result"):   # the score card after a run: "passed" (the pass was recorded) or "missed" (the episode ended without a pass)
+		if lab == null or lab.tele == null: return false
+		var rec_pass: bool = lab._rec_pass; var fin: bool = lab.tele.finished
+		match str(d["result"]):
+			"passed": if not rec_pass: return false
+			"missed": if not (fin and not rec_pass): return false
+	if d.has("checked"):   # the score card carries the Check result
+		if lab == null or lab.score_card == null or (lab.score_card.check_text != "") != bool(d["checked"]): return false
 	if d.has("toast"):
 		if lab == null or lab.celebration == null or (lab.celebration._toasts.size() > 0) != bool(d["toast"]): return false
 	if d.has("celebrating"):
@@ -557,6 +566,9 @@ func _tutorial_action(what: String) -> void:
 			else:
 				var hs := sl[0] as HSlider
 				hs.value = sqrt(470.0 / Circuits.input_wmax_for("", "dc", lab.task_id))   # the weight slider is square-law (value = wmax * s^2): 470 pA is inside the level's band
+		"raise_run":   # the weight raised, then a real click on Run (the player starts every run)
+			await _tutorial_action("raise")
+			await _press_id("BtnRun", "lab", "Run")
 		_: _fail("unknown tutorial action '%s'" % what)
 	await _frames(3)
 
@@ -581,6 +593,21 @@ func _first_pop() -> String:
 	var ps: Array = lab.circuit.get("populations", [])
 	return str(ps[0].get("id", "")) if not ps.is_empty() else ""
 
+## Wire a cell if the bench has none, then select the link of a sensor to it (or of it to a motor) with a real click on the link.
+func _link_select(is_in: bool) -> void:
+	var lab := _lab(); var ed := lab.editor
+	if _first_pop() == "": lab._add_neuron("E")
+	var pid := _first_pop()
+	var chs: Array = lab.circuit.get("inputs" if is_in else "outputs", [])
+	if chs.is_empty(): _fail("the circuit has no %s channel" % ("sensor" if is_in else "motor")); return
+	var nm := str(chs[0]["name"])
+	ed._make_link({"t": "in", "name": nm} if is_in else {"t": "pop", "id": pid}, {"t": "pop", "id": pid} if is_in else {"t": "out", "name": nm})
+	await _settle(); ed.fit(); ed._geo(); await _frames(2)
+	var mid := ed.link_mid("in" if is_in else "out", nm, pid)
+	if mid == Vector2.INF: _fail("the %s link is not drawn" % ("sensor" if is_in else "motor")); return
+	await _click_editor(mid)
+	if str(ed.sel.get("t", "")) != ("ilink" if is_in else "olink"): _fail("a click on the %s link selected %s" % [("sensor" if is_in else "motor"), str(ed.sel)])
+
 func _editor_action(act: String) -> void:
 	var lab := _lab()
 	if lab == null: _fail("not in the lab for '%s'" % act); return
@@ -602,6 +629,8 @@ func _editor_action(act: String) -> void:
 			while (lab.circuit.get("populations", []) as Array).size() < 2: lab._add_neuron("E")
 			var ps: Array = lab.circuit["populations"]
 			ed._make_link({"t": "pop", "id": str(ps[0]["id"])}, {"t": "pop", "id": str(ps[1]["id"])})
+		"select:ilink": await _link_select(true)
+		"select:olink": await _link_select(false)
 		"lesion_pick": ed.lesion_clicked.emit({"t": "pop", "id": _first_pop()})
 		"dx:right": await _dx_submit(true)
 		"dx:wrong": await _dx_submit(false)
@@ -610,6 +639,137 @@ func _editor_action(act: String) -> void:
 			await _press_id("BtnRevealAnswer", "lab.insp.dx", "reveal")
 		_: _fail("unknown editor action '%s'" % act)
 	await _frames(3)
+
+
+# ---------------------------------------------------------------------------------------------------- the tutorial with a gamepad only
+const PAD_DIRS := [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN]
+## The focus each step starts on (a control id, "editor", or "next").
+const PAD_START := {1: "next", 2: "BtnExcitatory", 3: "editor", 4: "editor", 5: "BtnRun", 6: "next", 7: "editor", 8: "BtnRun", 9: "BtnCheck", 10: "next", 11: "BtnEI", 12: "next"}
+
+## A press of a gamepad button, as the pad sends it: pressed, then released.
+func _pad_press(btn: JoyButton) -> void:
+	for down in [true, false]:
+		var e := InputEventJoypadButton.new(); e.button_index = btn; e.pressed = down; e.device = 0
+		vp.push_input(e)
+	await _frames(2)
+
+## Where the focus goes from `c` when the D-pad is pressed toward `btn` (the bench takes the first presses with its cursor, so it gets several tries); null when it stays.
+func _pad_leave(c: Control, btn: JoyButton) -> Control:
+	for i in (8 if c is CircuitEditor else 1):
+		if not is_instance_valid(c): return null
+		c.grab_focus(); await _frames(1)
+		await _pad_press(btn)
+		var n := vp.gui_get_focus_owner()
+		if n != c: return n
+	return null
+
+## Of `goals`, the controls the pad cannot reach from `start` with the D-pad. Every control the focus lands on on the way must be one the tutorial lights.
+func _pad_unreached(start: Control, goals: Array, what: String) -> Array:
+	var tut = app.tutorial
+	var seen := {start: true}; var queue: Array = [start]; var found := {}
+	while not queue.is_empty():
+		var c: Control = queue.pop_front()
+		if goals.has(c): found[c] = true
+		for b in PAD_DIRS:
+			var n: Control = await _pad_leave(c, b)
+			if n == null: continue
+			if not tut.focus_ok(n): _fail("%s: the pad focus can land on '%s' (%s), a control the tutorial dims" % [what, _raw_id(n), n.get_class()])
+			if not seen.has(n): seen[n] = true; queue.append(n)
+	return goals.filter(func(gc): return not found.has(gc))
+
+func _pad_cursor_to(kind: String, dir: JoyButton) -> bool:
+	var ed := _lab().editor
+	for i in 8:
+		if str(ed._cursor.get("t", "")) == kind: return true
+		await _pad_press(dir)
+	return str(ed._cursor.get("t", "")) == kind
+
+func _tut_step_is(n: int) -> bool: return app.tutorial.active and app.tutorial.step == n
+
+## Plate 0 with a gamepad and nothing else: on every step the focus starts on the right control and is never on a dimmed one, Back, Do it for me, Next or Finish, Skip and the lit
+## controls can all be reached with the D-pad, and each step is finished with pad presses only (the bench's own flow for the wires: X starts one, A ends it). Then the mode picker.
+func _pad_tutorial() -> void:
+	ctx = "pad tutorial"; cur_known = ""; cur_failed = false
+	var tut = app.tutorial
+	await _reset_world({"tutorial": "fresh", "mode": "guided"})
+	tut.on_play()
+	if not await _wait(func(): return _tut_step_is(1) and _lab() != null and _lab().editor != null, 10.0): _fail("Play on a fresh save did not start the tutorial"); return
+	app.pad.set_active(true)
+	await _frames(20)
+	for n in range(1, 13):
+		ctx = "pad tutorial step %d" % n
+		if not await _wait(func(): return _tut_step_is(n), 150.0): _fail("the tutorial never reached step %d" % n); break
+		await _frames(30)   # the gate and the focus settle
+		var lab := _lab()
+		var st: Dictionary = tut._steps()[n - 1]
+		var act := str(st.get("kind", "")) == "act"
+		var banner := {"next": tut.find_child("TutNext", true, false), "do": tut.find_child("TutDo", true, false), "back": tut.find_child("TutBack", true, false), "skip": tut.find_child("TutSkip", true, false)}
+		var start_id := str(PAD_START[n])
+		var want_of := func() -> Control: return banner["next"] if start_id == "next" else (lab.editor if start_id == "editor" else _find(start_id, lab))
+		await _wait(func(): var w: Control = want_of.call(); return w != null and vp.gui_get_focus_owner() == w, 8.0)   # the lit control may appear a moment after the step starts
+		var want: Control = want_of.call()
+		var fo := vp.gui_get_focus_owner()
+		if fo == null or fo != want: _fail("the focus starts on %s, not on %s" % [("%s '%s'" % [fo.get_class(), _raw_id(fo)]) if fo != null else "nothing", start_id])
+		# every control of the step can be reached
+		var goals := [banner["skip"], want]
+		if n > 1: goals.append(banner["back"])
+		goals.append(banner["do"] if act else banner["next"])
+		if act and n == 12: goals.append(banner["next"])
+		for gl in goals:
+			if gl == null or not gl.is_visible_in_tree(): _fail("a button of the step is not on screen")
+		goals = goals.filter(func(gc): return gc != null and gc.is_visible_in_tree())
+		var start: Control = want if want != null else fo
+		if start != null:
+			for miss in await _pad_unreached(start, goals, "step %d" % n): _fail("the pad cannot reach '%s' (%s)" % [_raw_id(miss), miss.get_class()])
+		# the step, done with the pad
+		match n:
+			2: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
+			3:
+				lab.editor.grab_focus(); await _frames(1)
+				if not await _pad_cursor_to("in", JOY_BUTTON_DPAD_LEFT): _fail("the cursor could not reach the sensor")
+				await _pad_press(JOY_BUTTON_X)
+				if not await _pad_cursor_to("pop", JOY_BUTTON_DPAD_RIGHT): _fail("the cursor could not reach the cell")
+				await _pad_press(JOY_BUTTON_A)
+			4:
+				lab.editor.grab_focus(); await _frames(1)
+				if not await _pad_cursor_to("pop", JOY_BUTTON_DPAD_LEFT): _fail("the cursor could not reach the cell")
+				await _pad_press(JOY_BUTTON_X)
+				if not await _pad_cursor_to("out", JOY_BUTTON_DPAD_RIGHT): _fail("the cursor could not reach the motor")
+				await _pad_press(JOY_BUTTON_A)
+			5: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
+			7:
+				lab.editor.grab_focus(); await _frames(1)
+				if not await _pad_cursor_to("in", JOY_BUTTON_DPAD_LEFT): _fail("the cursor could not reach the sensor")
+				await _pad_press(JOY_BUTTON_A)   # select it: its weight slider is in the inspector
+				await _frames(10)
+				var sl := lab.insp_body.find_children("*", "HSlider", true, false)
+				if sl.is_empty(): _fail("selecting the sensor with A showed no weight slider")
+				else:
+					for miss in await _pad_unreached(lab.editor, [sl[0]], "step 7"): _fail("the pad cannot reach the weight slider")
+					(sl[0] as HSlider).value = sqrt(470.0 / Circuits.input_wmax_for("", "dc", lab.task_id))
+				await _pad_press(JOY_BUTTON_START)   # Start runs
+			8: pass   # the run of step 7 plays on; the step ends when it passes
+			9: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
+			10: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
+			11: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
+			12: banner["next"].grab_focus(); await _pad_press(JOY_BUTTON_A)
+			_: banner["next"].grab_focus(); await _pad_press(JOY_BUTTON_A)
+		if n < 12 and not await _wait(func(): return tut.step > n or not tut.active, 150.0 if n in [7, 8, 9] else 15.0): _fail("pressing the pad buttons did not finish the step"); break
+	# the mode picker: its three buttons reachable, one pressed
+	ctx = "pad tutorial picker"
+	if not await _wait(func(): return tut.picker_open, 15.0): _fail("Finish did not open the mode picker"); app.pad.set_active(false); return
+	await _frames(30)
+	var fp := vp.gui_get_focus_owner()
+	var modes := []
+	for m in Progress.MODES: modes.append(tut.find_child("Mode_" + m, true, false))
+	if fp == null or not modes.has(fp): _fail("the focus does not start on a mode button")
+	else:
+		for miss in await _pad_unreached(fp, modes, "the mode picker"): _fail("the pad cannot reach '%s'" % _raw_id(miss))
+	var pick: Control = tut.find_child("Mode_standard", true, false)
+	if pick != null: pick.grab_focus(); await _pad_press(JOY_BUTTON_A)
+	if not await _wait(func(): return not tut.picker_open and app.cur == "tasks", 10.0): _fail("a pad press on a mode button did not close the picker and open the map")
+	app.pad.set_active(false); Kit.pad_mode = false
+	tut.reset_for_test()
 
 # ---------------------------------------------------------------------------------------------------- editor scripts (undo, zoom, selection, clipboard, slots)
 ## A key press through the viewport, as the player types it.
@@ -708,6 +868,39 @@ func _editor_script(name: String, eid: String) -> void:
 			lab._add_neuron("E"); await _settle()
 			await _press_id("BtnMore", "lab.task", eid); await _press_id("BtnPasteCircuitJson", "lab.more", eid); await _confirm_if_asked()
 			if Circuits.fingerprint(lab.circuit) != Circuits.fingerprint(Circuits.parse(copied)): _fail("Paste circuit JSON did not put the copied circuit back")
+		"card_move":   # a sensor card dragged with the mouse stays where it was dropped: kept in the circuit, through a reload, undone and redone
+			if _first_pop() == "": lab._add_neuron("E")
+			await _settle(); ed.fit(); ed._geo()
+			var cins: Array = lab.circuit.get("inputs", [])
+			if cins.is_empty(): _fail("the circuit has no sensor card"); return
+			var ckey := "in:" + str(cins[0]["name"])
+			var origin := ed.get_global_rect().position
+			var r0: Rect2 = ed._cards[ckey]
+			var a0 := origin + r0.get_center() - Vector2(16, 0)   # clear of the wiring handle on the right edge
+			await _drag(a0, a0 + Vector2(0, 80)); await _settle()
+			var off: Vector2 = ed._card_off(ckey)
+			if off.length() < 20.0: _fail("the sensor card did not follow the drag (offset %s)" % str(off)); return
+			var saved := Circuits.parse(Circuits.to_json(lab.circuit))
+			if not (((saved.get("meta", {}) as Dictionary).get("editor", {}) as Dictionary).has("cards")): _fail("the card position is not written with the circuit")
+			await _wait(func(): return false, 1.0)
+			lab._reload(); lab._build_inspector(); await _frames(5)
+			if ed._card_off(ckey).distance_to(off) > 0.01: _fail("the sensor card moved back when the engine reloaded (%s)" % str(ed._card_off(ckey)))
+			await _key(KEY_Z, true); await _settle()
+			if ed._card_off(ckey).length() > 0.01: _fail("Ctrl+Z did not put the sensor card back")
+			await _key(KEY_Z, true, true); await _settle()
+			if ed._card_off(ckey).distance_to(off) > 0.01: _fail("Ctrl+Shift+Z did not move the sensor card again")
+		"link_delete":   # a link is selected by a click and removed with Delete (and undone); the sensor and the cell stay
+			await _link_select(true)
+			if ((lab.circuit["inputs"][0]["targets"]) as Array).is_empty(): _fail("the sensor has no link to delete"); return
+			await _key(KEY_DELETE); await _settle()
+			if not ((lab.circuit["inputs"][0]["targets"]) as Array).is_empty() or Circuits.neuron_count(lab.circuit) < 1: _fail("Delete did not take the sensor link away alone")
+			await _key(KEY_Z, true); await _settle()
+			if ((lab.circuit["inputs"][0]["targets"]) as Array).is_empty(): _fail("Ctrl+Z did not bring the sensor link back")
+			await _link_select(false)
+			await _key(KEY_DELETE); await _settle()
+			if not ((lab.circuit["outputs"][0]["neurons"]) as Array).is_empty() or Circuits.neuron_count(lab.circuit) < 1: _fail("Delete did not take the motor link away alone")
+			await _key(KEY_Z, true); await _settle()
+			if ((lab.circuit["outputs"][0]["neurons"]) as Array).is_empty(): _fail("Ctrl+Z did not bring the motor link back")
 		_: _fail("unknown editor script '%s'" % name)
 	await _frames(3)
 
@@ -732,11 +925,11 @@ func _event(name: String, e: Dictionary) -> void:
 				lab._on_structure(); await _wait(func(): return lab._dirty < 0.0, 10.0); await _frames(3)
 			if lab == null or lab.tele == null or lab.tele.task == null or lab.tele.sim == null: _fail("no running episode to finish (the lab has no simulation)"); return
 			lab.tele.running = true; lab.tele.skip_until(float(lab.tele.task.duration_ms()))
-			if not await _wait(func(): return _detect("lab.endcard"), 120.0): _fail("the episode never ended: no end card after 120 s")
+			if not await _wait(func(): return _detect(str(e["to"])), 120.0): _fail("the episode never ended: the score card shows no result after 120 s")
 		"test_done":
 			if not await _wait(func(): return _detect("lab.endcard"), 400.0): _fail("the 5-seed test never finished (400 s)")
 		"check_done":
-			if not await _wait(func(): return _detect("lab.toast"), 120.0): _fail("Check never produced its verdict toast (120 s)")
+			if not await _wait(func(): return _detect("lab.checked"), 120.0): _fail("Check never wrote its result on the score card (120 s)")
 		"tut_pass":   # Plate 0 step 7: the live run finishes and passes by itself (the weight is already in the band)
 			if not await _wait(func(): return _detect(str(e["to"])), 90.0): _fail("the live run never passed: the tutorial did not leave step 7")
 		"first_pass": lab._celebrate(); await _frames(3)

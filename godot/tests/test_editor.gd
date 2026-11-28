@@ -38,6 +38,7 @@ func _init() -> void:
 	_group_sizes()
 	_small_bench()
 	_atlas()
+	_cards_and_links()
 	print("EDITOR %s (%d checks)" % ["OK" if fails == 0 else "FAILED: %d" % fails, checks])
 	quit(0 if fails == 0 else 1)
 
@@ -219,6 +220,87 @@ func _layouts() -> void:
 	var under := e2.to_model(m0); e2.zoom_at(m0, 1.3); _check(e2.to_model(m0).distance_to(under) < 0.01, "the model point under the pointer stays put")
 	e2.fit(); e2._geo(); _check(not e2._fit_pending, "F fits")
 	e2.queue_free()
+
+
+# ---------------------------------------------------------------------------------------------------- sensor and motor cards: drag them; links: select and disconnect them
+func _motion(ed: CircuitEditor, p: Vector2) -> void:
+	var m := InputEventMouseMotion.new(); m.position = p; ed._on_motion(m)
+
+## A real drag on the bench: press at `a`, move in steps, release at `b` (editor-local points).
+func _drag_on(ed: CircuitEditor, a: Vector2, b: Vector2) -> void:
+	ed._press(a)
+	for k in range(1, 7): _motion(ed, a.lerp(b, float(k) / 6.0))
+	ed._release(b)
+
+func _cards_and_links() -> void:
+	var ed := _editor(Vector2(1126, 690)); var c := _skeleton(); ed.set_circuit(c, null)
+	var a := Circuits.add_neuron(c, "iaf_psc_alpha", 0, Vector2(300, 240), "E"); var b := Circuits.add_neuron(c, "iaf_psc_alpha", 0, Vector2(520, 300), "E")
+	ed.edit_pending(); ed.commit_now()
+	ed._make_link({"t": "in", "name": "touch"}, {"t": "pop", "id": a}); ed._make_link({"t": "in", "name": "touch"}, {"t": "pop", "id": b})
+	ed._make_link({"t": "pop", "id": a}, {"t": "out", "name": "withdraw"}); ed.commit_now()
+	ed.fit(); ed._geo()
+	var base := Circuits.to_json(c)
+	# a sensor card and a motor card move where they are dragged, and stay (positions are in the circuit, so a reload keeps them), and undo takes them back
+	for card in [["in", "touch"], ["out", "withdraw"]]:
+		var key: String = "%s:%s" % [card[0], card[1]]
+		var r0 := ed.card_rect(key)
+		var p0 := r0.get_center() - Vector2(20.0 if card[0] == "in" else -20.0, 0.0)   # clear of the sensor's right-edge wiring handle
+		_drag_on(ed, p0, p0 + Vector2(0, 90))
+		var r1 := ed.card_rect(key)
+		_check(absf((r1.get_center().y - r0.get_center().y) - 90.0) < 2.0 and absf(r1.get_center().x - r0.get_center().x) < 2.0, "%s card follows the drag (moved %s)" % [key, str(r1.get_center() - r0.get_center())])
+		_check(ed._card_off(key).length() > 10.0 and (c["meta"]["editor"] as Dictionary).has("cards"), "%s card position is kept in meta.editor.cards" % key)
+		ed.set_circuit(c, null); ed._geo()   # the lab's reload hands the editor the same circuit again
+		_check(ed.card_rect(key).get_center().distance_to(r1.get_center()) < 2.0, "%s card does not snap back after a reload" % key)
+		_check(JSON.parse_string(Circuits.to_json(c))["meta"]["editor"]["cards"].has(key), "%s card position is written with the circuit" % key)
+		_check(ed.undo_depth() >= 1 and ed.undo(), "undo after moving %s" % key)
+		_check(ed.card_rect(key).get_center().distance_to(r0.get_center()) < 2.0, "undo puts %s back" % key)
+		ed.redo(); _check(ed.card_rect(key).get_center().distance_to(r1.get_center()) < 2.0, "redo moves %s again" % key)
+		ed.undo()
+	_check(Circuits.to_json(c) == base, "moving and undoing the cards leaves the circuit as it was, byte for byte")
+	# a click is not a move
+	var rk := ed.card_rect("in:touch"); ed._press(rk.get_center() - Vector2(20, 0)); ed._release(rk.get_center() - Vector2(20, 0))
+	_check(ed._card_off("in:touch") == Vector2.ZERO and str(ed.sel.get("t", "")) == "in", "a click on a card selects it and does not move it")
+	# Shift + arrow nudges the selected card
+	var kev := InputEventKey.new(); kev.keycode = KEY_RIGHT; kev.pressed = true; kev.shift_pressed = true
+	ed._on_key_focused(kev); _check(ed._card_off("in:touch").x > 2.0, "Shift + arrow nudges the selected sensor card")
+	ed.undo()
+	# a link from a sensor card to a cell is one thing to select, with several targets one at a time
+	var mid := ed.link_mid("in", "touch", a)
+	_check(mid != Vector2.INF, "the sensor's link to the first cell is drawn")
+	var h := ed._hit(mid)
+	_check(str(h.get("t", "")) == "ilink" and str(h.get("pop", "")) == a and str(h.get("name", "")) == "touch", "a hit on the sensor link names the sensor and the cell (%s)" % str(h))
+	ed._press(mid); ed._release(mid)
+	_check(str(ed.sel.get("t", "")) == "ilink" and str(ed.sel.get("pop", "")) == a, "a click selects the sensor link")
+	ed.delete_selected()
+	var tg: Array = c["inputs"][0]["targets"]
+	_check(tg.size() == 1 and Circuits.proj_pop(tg[0]) == b and Circuits.neuron_count(c) == 2, "Delete takes away that one link only (the sensor and both cells stay, the other link stays)")
+	_check(ed.sel.is_empty(), "nothing is selected after the link is gone")
+	ed.commit_now(); ed.undo(); _check((c["inputs"][0]["targets"] as Array).size() == 2, "undo brings the link back")
+	# a cell to a motor card
+	var mo := ed.link_mid("out", "withdraw", a)
+	var ho := ed._hit(mo)
+	_check(str(ho.get("t", "")) == "olink" and str(ho.get("pop", "")) == a, "a hit on the motor link names the cell and the motor (%s)" % str(ho))
+	ed._press(mo); ed._release(mo); _check(str(ed.sel.get("t", "")) == "olink", "a click selects the motor link")
+	ed.delete_selected(); _check((c["outputs"][0]["neurons"] as Array).is_empty() and Circuits.neuron_count(c) == 2, "Delete takes the motor link away and leaves the cell")
+	ed.commit_now(); ed.undo(); _check((c["outputs"][0]["neurons"] as Array).size() == 1, "undo brings the motor link back")
+	# the keyboard and pad cursor reaches the links, selects them with Enter / A
+	var has_link := false
+	for it in ed._nav_items():
+		if str((it["h"] as Dictionary).get("t", "")) in ["ilink", "olink"]: has_link = true
+	_check(has_link, "the keyboard and pad cursor can reach the links")
+	ed._cursor = {"t": "ilink", "name": "touch", "pop": a, "names": ["touch"]}; ed.cursor_accept()
+	_check(str(ed.sel.get("t", "")) == "ilink" and str(ed.sel.get("pop", "")) == a, "Enter / A on a link selects it")
+	# a given (locked) circuit keeps its links: they can be selected, Delete answers in words and changes nothing
+	var cg := _load("atlas_probe_given.json"); var eg := _editor(Vector2(1126, 690)); eg.set_circuit(cg, null); eg.fit(); eg._geo()
+	var before := Circuits.to_json(cg)
+	var gm := eg.link_mid("in", "plus", "P")
+	_check(gm != Vector2.INF, "the given circuit draws the sensor link")
+	eg._press(gm); eg._release(gm); _check(str(eg.sel.get("t", "")) == "ilink", "a link of the given circuit can be selected")
+	eg._note = ""; eg.delete_selected()
+	_check(Circuits.to_json(cg) == before and eg._note.contains("given"), "Delete on a link of the given circuit changes nothing and says why")
+	# a read-only bench (a diagnosis case) offers no link to select
+	eg.editable = false; _check(str(eg._hit(gm).get("t", "")) != "ilink", "a read-only bench has no selectable links")
+	for e in [ed, eg]: e.queue_free()
 
 # ---------------------------------------------------------------------------------------------------- clipboard and import
 func _clipboard() -> void:

@@ -639,6 +639,30 @@
    ],
    "state_of": "lab"
   },
+  "lab.insp.ilink": {
+   "kind": "panel",
+   "label": "Inspector: a link from a sensor to a cell selected",
+   "detect": {
+    "screen": "lab",
+    "view": "ilink"
+   },
+   "controls": [
+    "BtnDisconnect"
+   ],
+   "state_of": "lab"
+  },
+  "lab.insp.olink": {
+   "kind": "panel",
+   "label": "Inspector: a link from a cell to a motor selected",
+   "detect": {
+    "screen": "lab",
+    "view": "olink"
+   },
+   "controls": [
+    "BtnDisconnect"
+   ],
+   "state_of": "lab"
+  },
   "lab.insp.in": {
    "kind": "panel",
    "label": "Inspector: a sensor / noise input selected",
@@ -836,21 +860,15 @@
   },
   "lab.endcard": {
    "kind": "modal",
-   "label": "End-of-episode card (score, stars, next steps)",
+   "label": "Test x5 result card (worlds passed, stars, what to try next; Next level after a pass)",
    "detect": {
     "find": "EndCard"
    },
    "controls": [
-    "BtnRunAgain",
-    "BtnTestX5",
     "BtnClose"
    ],
    "optional": [
-    "BtnResults",
-    "BtnHint",
-    "BtnNextTask",
-    "BtnLesionLab",
-    "BtnAnalysis"
+    "BtnNextTask"
    ],
    "scope": "EndCard",
    "modal": true,
@@ -858,6 +876,51 @@
     "control": "BtnClose",
     "key": "Escape"
    }
+  },
+  "lab.result.passed": {
+   "kind": "state",
+   "label": "Score card after a pass: Next level, Results, Lesion lab, Analysis (no card rises over the bench)",
+   "detect": {
+    "screen": "lab",
+    "task": "level",
+    "result": "passed"
+   },
+   "optional": [
+    "BtnScoreNext",
+    "BtnScoreResults",
+    "BtnScoreLesionLab",
+    "BtnScoreAnalysis"
+   ],
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
+  },
+  "lab.result.missed": {
+   "kind": "state",
+   "label": "Score card after a run that did not pass: the verdict (no card rises over the bench)",
+   "detect": {
+    "screen": "lab",
+    "task": "level",
+    "result": "missed"
+   },
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
+  },
+  "lab.checked": {
+   "kind": "state",
+   "label": "Score card with the Check result (written on the card, no toast)",
+   "detect": {
+    "screen": "lab",
+    "task": "level",
+    "checked": true
+   },
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
   },
   "lab.testcard": {
    "kind": "modal",
@@ -926,14 +989,14 @@
   },
   "lab.toast": {
    "kind": "toast",
-   "label": "Toast (Check verdict, Skip, hints unlocked, notebook entry)",
+   "label": "Toast (Skip, hints unlocked, first pass, an error)",
    "detect": {
     "toast": true
    }
   },
   "lab.stamp": {
    "kind": "overlay",
-   "label": "First-pass celebration: FIRST PASS stamp, trail, notebook toast",
+   "label": "First-pass celebration: the glow along the path, a toast, the notebook card (never blocks the bench)",
    "detect": {
     "screen": "lab",
     "celebrating": true
@@ -941,7 +1004,7 @@
   },
   "tut.s1": {
    "kind": "overlay",
-   "label": "Plate 0 step 1: the bench, sensor and motor cards (Next)",
+   "label": "Tutorial step 1: the bench, a sensor on the left and a motor on the right (Next)",
    "detect": {
     "screen": "lab",
     "tutorial": "s1"
@@ -958,7 +1021,7 @@
   },
   "tut.s2": {
    "kind": "overlay",
-   "label": "Plate 0 step 2: add a neuron (lit: + Excitatory)",
+   "label": "Tutorial step 2: add a cell (lit: + Excitatory)",
    "detect": {
     "screen": "lab",
     "tutorial": "s2"
@@ -976,7 +1039,7 @@
   },
   "tut.s3": {
    "kind": "overlay",
-   "label": "Plate 0 step 3: drag sensor to cell (animated ghost)",
+   "label": "Tutorial step 3: connect the sensor to the cell (drag, or X then A with the pad)",
    "detect": {
     "screen": "lab",
     "tutorial": "s3"
@@ -994,7 +1057,7 @@
   },
   "tut.s4": {
    "kind": "overlay",
-   "label": "Plate 0 step 4: drag cell to motor",
+   "label": "Tutorial step 4: connect the cell to the motor (drag, or X then A with the pad)",
    "detect": {
     "screen": "lab",
     "tutorial": "s4"
@@ -1012,28 +1075,10 @@
   },
   "tut.s5": {
    "kind": "overlay",
-   "label": "Plate 0 step 5: raster and trace explained while it runs",
+   "label": "Tutorial step 5: press Run (nothing runs until the player does)",
    "detect": {
     "screen": "lab",
     "tutorial": "s5"
-   },
-   "controls": [
-    "TutBack",
-    "TutNext",
-    "TutSkip"
-   ],
-   "scope": "Tutorial",
-   "state_of": "lab",
-   "co": [
-    "lab.task"
-   ]
-  },
-  "tut.s6": {
-   "kind": "overlay",
-   "label": "Plate 0 step 6: click the sensor, raise its weight until the cell spikes",
-   "detect": {
-    "screen": "lab",
-    "tutorial": "s6"
    },
    "controls": [
     "TutBack",
@@ -1046,9 +1091,27 @@
     "lab.task"
    ]
   },
+  "tut.s6": {
+   "kind": "overlay",
+   "label": "Tutorial step 6: the raster and the trace, no spikes yet (Next)",
+   "detect": {
+    "screen": "lab",
+    "tutorial": "s6"
+   },
+   "controls": [
+    "TutBack",
+    "TutNext",
+    "TutSkip"
+   ],
+   "scope": "Tutorial",
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
+  },
   "tut.s7": {
    "kind": "overlay",
-   "label": "Plate 0 step 7: find the middle, the live run passes",
+   "label": "Tutorial step 7: make the signal stronger: weight up, Run, until the cell fires",
    "detect": {
     "screen": "lab",
     "tutorial": "s7"
@@ -1066,7 +1129,7 @@
   },
   "tut.s8": {
    "kind": "overlay",
-   "label": "Plate 0 step 8: press Check",
+   "label": "Tutorial step 8: the goal: fire on the big step only; change the weight, Run, read the score",
    "detect": {
     "screen": "lab",
     "tutorial": "s8"
@@ -1084,28 +1147,10 @@
   },
   "tut.s9": {
    "kind": "overlay",
-   "label": "Plate 0 step 9: read the verdict and the stars",
+   "label": "Tutorial step 9: press Check",
    "detect": {
     "screen": "lab",
     "tutorial": "s9"
-   },
-   "controls": [
-    "TutBack",
-    "TutNext",
-    "TutSkip"
-   ],
-   "scope": "Tutorial",
-   "state_of": "lab",
-   "co": [
-    "lab.task"
-   ]
-  },
-  "tut.s10": {
-   "kind": "overlay",
-   "label": "Plate 0 step 10: the E / I switch on a second cell",
-   "detect": {
-    "screen": "lab",
-    "tutorial": "s10"
    },
    "controls": [
     "TutBack",
@@ -1118,12 +1163,48 @@
     "lab.task"
    ]
   },
+  "tut.s10": {
+   "kind": "overlay",
+   "label": "Tutorial step 10: the result is on the score card (Next)",
+   "detect": {
+    "screen": "lab",
+    "tutorial": "s10"
+   },
+   "controls": [
+    "TutBack",
+    "TutNext",
+    "TutSkip"
+   ],
+   "scope": "Tutorial",
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
+  },
   "tut.s11": {
    "kind": "overlay",
-   "label": "Plate 0 step 11: hints, recipe and brief",
+   "label": "Tutorial step 11: the E / I switch on a second cell",
    "detect": {
     "screen": "lab",
     "tutorial": "s11"
+   },
+   "controls": [
+    "TutBack",
+    "TutDo",
+    "TutSkip"
+   ],
+   "scope": "Tutorial",
+   "state_of": "lab",
+   "co": [
+    "lab.task"
+   ]
+  },
+  "tut.s12": {
+   "kind": "overlay",
+   "label": "Tutorial step 12: hints and the brief (Finish)",
+   "detect": {
+    "screen": "lab",
+    "tutorial": "s12"
    },
    "controls": [
     "TutBack",
@@ -1138,7 +1219,7 @@
   },
   "tut.picker": {
    "kind": "overlay",
-   "label": "Plate 0 step 12: pick a mode (Guided / Standard / Researcher) over the campaign map",
+   "label": "Tutorial step 13: pick a mode (Guided / Standard / Researcher) over the campaign map",
    "detect": {
     "screen": "tasks",
     "tutorial": "picker"
@@ -1532,10 +1613,10 @@
    "control": "BtnRun",
    "expect": {
     "text": {
-     "BtnRun": "Run"
+     "BtnRun": "Pause"
     }
    },
-   "note": "Run / Pause toggles the live run."
+   "note": "Run starts the run (it never starts by itself); the button then reads Pause."
   },
   {
    "id": "lab.reset",
@@ -1622,7 +1703,7 @@
   {
    "id": "lab.check",
    "from": "lab.task",
-   "to": "lab.toast",
+   "to": "lab.checked",
    "control": "BtnCheck",
    "wait": 60,
    "setup": {
@@ -1630,7 +1711,7 @@
     "mode": "guided"
    },
    "needs_reference": true,
-   "note": "Instant headless score of the circuit on the level's own seed; the verdict arrives as a toast (a short progress card shows while it runs). Needs a wired circuit."
+   "note": "Instant headless score of the circuit on five worlds; the result is written on the score card (a short progress card shows while it runs). Needs a wired circuit."
   },
   {
    "id": "lab.hint_open",
@@ -1716,6 +1797,22 @@
    "note": "Dragging from one neuron's rim to another makes an axon and selects it."
   },
   {
+   "id": "lab.select_ilink",
+   "from": "lab.task",
+   "to": "lab.insp.ilink",
+   "control": "Editor",
+   "action": "select:ilink",
+   "note": "Clicking the dashed link from a sensor card to a cell selects that one link."
+  },
+  {
+   "id": "lab.select_olink",
+   "from": "lab.task",
+   "to": "lab.insp.olink",
+   "control": "Editor",
+   "action": "select:olink",
+   "note": "Clicking the dashed link from a cell to a motor card selects that one link."
+  },
+  {
    "id": "lab.deselect",
    "from": "lab.insp.pop",
    "to": "lab.insp.brief",
@@ -1759,6 +1856,20 @@
    "control": "BtnDelete"
   },
   {
+   "id": "lab.ilink.disconnect",
+   "from": "lab.insp.ilink",
+   "to": "lab.insp.brief",
+   "control": "BtnDisconnect",
+   "note": "Disconnect removes that one sensor link."
+  },
+  {
+   "id": "lab.olink.disconnect",
+   "from": "lab.insp.olink",
+   "to": "lab.insp.brief",
+   "control": "BtnDisconnect",
+   "note": "Disconnect removes that one motor link."
+  },
+  {
    "id": "lab.in.disconnect",
    "from": "lab.insp.in",
    "to": "lab.insp.in",
@@ -1793,6 +1904,22 @@
    "control": "Editor",
    "action": "script:zoom_fit",
    "note": "The wheel zooms about the pointer (0.15x to 3x), middle-drag pans, F fits."
+  },
+  {
+   "id": "lab.card_move",
+   "from": "lab.task",
+   "to": "lab.task",
+   "control": "Editor",
+   "action": "script:card_move",
+   "note": "A sensor or motor card is dragged anywhere with the mouse; it stays (kept in the circuit), survives a reload, and Ctrl+Z / Ctrl+Shift+Z move it back and again."
+  },
+  {
+   "id": "lab.link_delete",
+   "from": "lab.task",
+   "to": "lab.task",
+   "control": "Editor",
+   "action": "script:link_delete",
+   "note": "A sensor link and a motor link are each selected by a click and removed with Delete, one at a time; Ctrl+Z brings each back."
   },
   {
    "id": "lab.multiselect",
@@ -1984,28 +2111,60 @@
   {
    "id": "lab.episode_end",
    "from": "lab.task",
-   "to": "lab.endcard",
+   "to": "lab.result.passed",
    "control": "",
    "action": "event:episode_end",
    "setup": {
     "mode": "guided"
    },
    "needs_reference": true,
-   "note": "The episode ran to its end.",
-   "returns": true
+   "note": "The player pressed Run and the episode ran to its end with a pass: the score card shows it and offers the ways on."
   },
   {
    "id": "lab.episode_end_fail",
    "from": "lab.task",
-   "to": "lab.endcard",
+   "to": "lab.result.missed",
    "control": "",
    "action": "event:episode_end_failing",
-   "note": "A circuit that does not pass runs to its end.",
-   "returns": true,
+   "note": "A circuit that does not pass runs to its end: the verdict is on the score card.",
    "needs_reference": true,
    "setup": {
     "mode": "guided"
    }
+  },
+  {
+   "id": "result.next",
+   "from": "lab.result.passed",
+   "to": "lab.task",
+   "control": "BtnScoreNext",
+   "setup": {
+    "mode": "guided"
+   },
+   "needs_reference": true,
+   "guard": "the level passed and a next level exists"
+  },
+  {
+   "id": "result.lesion",
+   "from": "lab.result.passed",
+   "to": "lab.insp.lesion",
+   "control": "BtnScoreLesionLab",
+   "setup": {
+    "mode": "guided"
+   },
+   "needs_reference": true,
+   "guard": "after a pass"
+  },
+  {
+   "id": "result.analysis",
+   "from": "lab.result.passed",
+   "to": "analysis",
+   "control": "BtnScoreAnalysis",
+   "setup": {
+    "mode": "guided",
+    "unlock_all": true
+   },
+   "needs_reference": true,
+   "guard": "from chapter II"
   },
   {
    "id": "lab.test_done",
@@ -2021,29 +2180,6 @@
    "note": "After the fifth seed the card turns into the end card with the 5-seed verdict."
   },
   {
-   "id": "end.run_again",
-   "from": "lab.endcard",
-   "to": "lab.task",
-   "control": "BtnRunAgain",
-   "setup": {
-    "mode": "guided"
-   },
-   "needs_reference": true
-  },
-  {
-   "id": "end.test",
-   "from": "lab.endcard",
-   "to": "lab.testcard",
-   "control": "BtnTestX5",
-   "setup": {
-    "mode": "guided"
-   },
-   "needs_reference": true,
-   "returns": true,
-   "may_finish_to": "lab.endcard",
-   "returns_to": "lab.task"
-  },
-  {
    "id": "end.next",
    "from": "lab.endcard",
    "to": "lab.task",
@@ -2053,44 +2189,6 @@
    },
    "needs_reference": true,
    "guard": "the level passed and a next level exists"
-  },
-  {
-   "id": "end.lesion",
-   "from": "lab.endcard",
-   "to": "lab.insp.lesion",
-   "control": "BtnLesionLab",
-   "setup": {
-    "mode": "guided"
-   },
-   "needs_reference": true,
-   "guard": "after a pass"
-  },
-  {
-   "id": "end.analysis",
-   "from": "lab.endcard",
-   "to": "analysis",
-   "control": "BtnAnalysis",
-   "setup": {
-    "mode": "guided",
-    "unlock_all": true
-   },
-   "needs_reference": true,
-   "guard": "from chapter II"
-  },
-  {
-   "id": "end.hint",
-   "from": "lab.endcard",
-   "to": "lab.hint",
-   "control": "BtnHint",
-   "setup": {
-    "mode": "guided"
-   },
-   "guard": "not passed; Guided, or Standard after two misses",
-   "needs_reference": true,
-   "path_avoid": [
-    "lab.episode_end",
-    "lab.test_done"
-   ]
   },
   {
    "id": "test.cancel",
@@ -2408,7 +2506,7 @@
    "setup": {
     "tutorial": "fresh"
    },
-   "note": "Play on a fresh save starts Plate 0 in the lab (m_threshold, Guided, empty bench)."
+   "note": "Play on a fresh save starts the tutorial in the lab (m_threshold, Guided, empty bench)."
   },
   {
    "id": "tut.play_skipped",
@@ -2425,15 +2523,35 @@
    "from": "campaign",
    "to": "tut.s1",
    "control": "BtnTutorial",
-   "note": "Title > Play > Tutorial replays Plate 0 at any time."
+   "note": "Title > Play > Tutorial replays the tutorial at any time."
+  },
+  {
+   "id": "tut.s1_next",
+   "from": "tut.s1",
+   "to": "tut.s2",
+   "control": "TutNext"
   },
   {
    "id": "tut.s2_do",
    "from": "tut.s2",
    "to": "tut.s3",
    "control": "TutDo",
-   "note": "Do it for me adds the neuron.",
+   "note": "Do it for me adds the cell.",
    "wait": 5
+  },
+  {
+   "id": "tut.s2_press",
+   "from": "tut.s2",
+   "to": "tut.s3",
+   "control": "BtnExcitatory",
+   "note": "The player adds the cell with the lit palette button (a real click through the hole in the dim).",
+   "wait": 5
+  },
+  {
+   "id": "tut.s2_back",
+   "from": "tut.s2",
+   "to": "tut.s1",
+   "control": "TutBack"
   },
   {
    "id": "tut.s3_do",
@@ -2441,6 +2559,15 @@
    "to": "tut.s4",
    "control": "TutDo",
    "note": "Do it for me wires the sensor to the cell.",
+   "wait": 5
+  },
+  {
+   "id": "tut.s3_drag",
+   "from": "tut.s3",
+   "to": "tut.s4",
+   "control": "",
+   "action": "tut:drag_in",
+   "note": "A real mouse drag from the sensor card's edge onto the cell.",
    "wait": 5
   },
   {
@@ -2452,27 +2579,61 @@
    "wait": 5
   },
   {
-   "id": "tut.s5_next",
+   "id": "tut.s4_drag",
+   "from": "tut.s4",
+   "to": "tut.s5",
+   "control": "",
+   "action": "tut:drag_out",
+   "note": "A real mouse drag from the cell's rim onto the motor card.",
+   "wait": 5
+  },
+  {
+   "id": "tut.s5_do",
    "from": "tut.s5",
    "to": "tut.s6",
+   "control": "TutDo",
+   "note": "Do it for me presses Run.",
+   "wait": 20
+  },
+  {
+   "id": "tut.s5_press",
+   "from": "tut.s5",
+   "to": "tut.s6",
+   "control": "BtnRun",
+   "note": "The player presses the lit Run button: the run starts only now.",
+   "wait": 20
+  },
+  {
+   "id": "tut.s6_next",
+   "from": "tut.s6",
+   "to": "tut.s7",
    "control": "TutNext"
   },
   {
-   "id": "tut.s6_do",
-   "from": "tut.s6",
-   "to": "tut.s7",
-   "control": "TutDo",
-   "wait": 60,
-   "note": "Do it for me sets a weight inside the band; the step ends when the cell spikes."
-  },
-  {
-   "id": "tut.s7_pass",
+   "id": "tut.s7_do",
    "from": "tut.s7",
    "to": "tut.s8",
+   "control": "TutDo",
+   "wait": 60,
+   "note": "Do it for me sets a weight inside the band and presses Run; the step ends when the cell spikes."
+  },
+  {
+   "id": "tut.s7_raise",
+   "from": "tut.s7",
+   "to": "tut.s8",
+   "control": "",
+   "action": "tut:raise_run",
+   "wait": 60,
+   "note": "A real click on the sensor card, the weight slider moved into the band, then a real click on Run."
+  },
+  {
+   "id": "tut.s8_pass",
+   "from": "tut.s8",
+   "to": "tut.s9",
+   "control": "",
    "action": "event:tut_pass",
    "slow": true,
-   "note": "The live run finishes and passes: the step ends by itself.",
-   "control": ""
+   "note": "The run the player started finishes and passes: the step ends by itself."
   },
   {
    "id": "tut.s8_do",
@@ -2480,91 +2641,52 @@
    "to": "tut.s9",
    "control": "TutDo",
    "wait": 120,
-   "note": "Do it for me presses Check; the step ends when the verdict is in."
+   "note": "Do it for me sets the weight and presses Run; the step ends when the run passes."
   },
   {
-   "id": "tut.s9_next",
+   "id": "tut.s9_do",
    "from": "tut.s9",
    "to": "tut.s10",
-   "control": "TutNext"
-  },
-  {
-   "id": "tut.s10_do",
-   "from": "tut.s10",
-   "to": "tut.s11",
    "control": "TutDo",
-   "note": "Do it for me flips the second cell to inhibitory.",
-   "wait": 5
+   "wait": 120,
+   "note": "Do it for me presses Check; the step ends when the result is on the score card."
   },
   {
-   "id": "tut.s11_finish",
-   "from": "tut.s11",
-   "to": "tut.picker",
-   "control": "TutNext",
-   "note": "Finish: the map opens with the mode picker."
-  },
-  {
-   "id": "tut.s1_next",
-   "from": "tut.s1",
-   "to": "tut.s2",
-   "control": "TutNext"
-  },
-  {
-   "id": "tut.s2_press",
-   "from": "tut.s2",
-   "to": "tut.s3",
-   "control": "BtnExcitatory",
-   "note": "The player adds the neuron with the lit palette button (a real click through the hole in the dim).",
-   "wait": 5
-  },
-  {
-   "id": "tut.s2_back",
-   "from": "tut.s2",
-   "to": "tut.s1",
-   "control": "TutBack"
-  },
-  {
-   "id": "tut.s3_drag",
-   "from": "tut.s3",
-   "to": "tut.s4",
-   "action": "tut:drag_in",
-   "note": "A real mouse drag from the sensor card's edge onto the cell.",
-   "control": "",
-   "wait": 5
-  },
-  {
-   "id": "tut.s4_drag",
-   "from": "tut.s4",
-   "to": "tut.s5",
-   "action": "tut:drag_out",
-   "note": "A real mouse drag from the cell's rim onto the motor card.",
-   "control": "",
-   "wait": 5
-  },
-  {
-   "id": "tut.s6_raise",
-   "from": "tut.s6",
-   "to": "tut.s7",
-   "action": "tut:raise",
-   "wait": 60,
-   "note": "A real click on the sensor card, then the weight slider moved into the band.",
-   "control": ""
-  },
-  {
-   "id": "tut.s8_check",
-   "from": "tut.s8",
-   "to": "tut.s9",
+   "id": "tut.s9_check",
+   "from": "tut.s9",
+   "to": "tut.s10",
    "control": "BtnCheck",
    "wait": 120,
    "note": "The player presses the lit Check button."
   },
   {
-   "id": "tut.s10_ei",
+   "id": "tut.s10_next",
    "from": "tut.s10",
    "to": "tut.s11",
+   "control": "TutNext"
+  },
+  {
+   "id": "tut.s11_do",
+   "from": "tut.s11",
+   "to": "tut.s12",
+   "control": "TutDo",
+   "note": "Do it for me flips the second cell to inhibitory.",
+   "wait": 5
+  },
+  {
+   "id": "tut.s11_ei",
+   "from": "tut.s11",
+   "to": "tut.s12",
    "control": "BtnEI",
    "note": "The player presses the lit E / I button.",
    "wait": 5
+  },
+  {
+   "id": "tut.s12_finish",
+   "from": "tut.s12",
+   "to": "tut.picker",
+   "control": "TutNext",
+   "note": "Finish: the map opens with the mode picker."
   },
   {
    "id": "tut.skip",

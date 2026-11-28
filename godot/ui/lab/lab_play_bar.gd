@@ -217,7 +217,6 @@ func check_poll() -> void:
 	if not bool(r.get("done", false)): check_progress(true); return
 	check_progress(false)
 	var snap := _check_snap; _check_snap = {}
-	var ms := float(r.get("ms", float(Time.get_ticks_msec() - _check_t0)))
 	_check_job = 0; _check_task = null
 	_check_button_reset()
 	if not snap.is_empty() and (str(snap["fp"]) != Circuits.fingerprint(lab.circuit) or bool(snap["ref"]) != lab._is_reference()):   # the bench changed while it ran
@@ -232,12 +231,12 @@ func check_poll() -> void:
 	if verdict == "" and not runs.is_empty(): verdict = str((runs[0] as Dictionary).get("verdict", ""))
 	verdict = Circuits.cap_verdict(verdict, lab.circuit, lab.task_id)
 	var was_ref := bool(snap.get("ref", lab._is_reference()))
-	var head := ("Check: passed  %d" if five or (worlds <= 1 and passed) else "Check: not passed  %d") % val
-	if worlds > 1: head = "Check: %d of %d worlds passed  %d" % [wins, worlds, val]
-	lab.celebration.toast(head, "%s  (%.1f s)" % [verdict, ms * 0.001], Kit.GREEN if (five or (worlds <= 1 and passed)) else (Kit.AMBER if passed else Kit.RED), 6.0)
+	var head := ("Check: passed, score %d" if five or (worlds <= 1 and passed) else "Check: not passed, score %d") % val
+	if worlds > 1: head = "Check: %d of %d worlds passed, score %d" % [wins, worlds, val]
 	GameAudio.event("pass" if passed else "fail")
 	checks_done += 1
-	if lab.score_card != null: lab.score_card.check_text = "check %d%s" % [val, "" if passed else " (miss)"]
+	if lab.score_card != null:   # the result is written on the score card (no toast): its first rows, until the bench changes or a run starts
+		lab.score_card.check_text = head + "."; lab.score_card.check_verdict = verdict; lab.score_card.check_ok = five or (worlds <= 1 and passed)
 	if not passed and not was_ref: note_fail()
 	elif passed and not lab.lesion_on: _record_check(val, was_ref, five)
 

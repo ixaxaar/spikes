@@ -1,23 +1,27 @@
 class_name Tutorial
 extends Control
-## "Plate 0: the first neuron": the interactive tutorial, the mode picker and the one-step pointers. One overlay that lives above the screens (main.gd keeps it as
+## The tutorial, the mode picker and the one-step pointers. One overlay that lives above the screens (main.gd keeps it as
 ## `app.tutorial`) and follows the lab it is bound to (the lab calls lab_opened / lab_closed from build() and _exit_tree()).
 ##
 ## MODAL (the tutorial itself, `active`): everything is dimmed except the highlighted control(s); only those take clicks (_has_point). A banner holds the step text and
 ## "Back a step", "Do it for me" (performs the step's action, so no step can trap the player), "Next" (steps with nothing to do) and "Skip tutorial". Esc and the pad's
 ## B skip (main.gd back()). A step advances when the player has DONE its action: the state of the bench and of the live run is polled, nothing is trusted from clicks.
+## Nothing in it runs by itself: the run starts when the player presses Run (step 5), as it does in every level.
+## PAD: with a gamepad (Kit.pad_mode) the dimmed controls take no focus (_gate_focus), the focus starts on the control the step is about, and every button of the banner and
+## every lit control can be reached with the D-pad. The step text names the pad buttons (the step's "pad" text). The wiring steps use the bench's own pad flow
+## (cursor, X starts a wire, A finishes it).
 ## AMBIENT (not modal): a pulsing ring on m_threshold's first wired sensor card until it has been opened once, and a one-step pointer the first time the player
 ## opens m_inhibition, reflex, m_adaptation or m_tonic. They never take clicks except their own "Got it".
 ## PICKER: the one-screen difficulty choice (Guided / Standard / Researcher) over the campaign map, at the end of the tutorial and on the first Play if it was skipped.
 ## The "seen" flags live in progress.cfg [meta] (Progress.meta_get / meta_put): tutorial ("" | "done" | "skipped"), mode_picked, sensor_opened, tip_<task>.
 ## Reduced motion: no pulsing and no moving ghost, a static ring and a static arrow.
 const TASK := "m_threshold"
-const STEP_COUNT := 11   # the lab steps; the twelfth, the mode picker, is shown over the campaign map
+const STEP_COUNT := 12   # the lab steps; the thirteenth, the mode picker, is shown over the campaign map
 const TIPS := {
-	"m_inhibition": {"text": "New here: an inhibitory cell pushes its targets down instead of up. Select a neuron, then press E / I to flip it.", "ids": ["BtnEI", "BtnInhibitory"]},
-	"reflex": {"text": "New here: one disc can stand for a whole group of cells. Select a neuron and set “neurons in group” to make it many.", "row": "neurons in group", "ids": []},
-	"m_adaptation": {"text": "New here: a cell has more settings than the parts bin shows. Select a neuron and open Advanced to reach them.", "ids": ["BtnAdvanced"]},
-	"m_tonic": {"text": "New here: a bias current is a steady push a cell gets with no input at all. Select a neuron, open Advanced and look for it.", "ids": ["BtnAdvanced"]},
+	"m_inhibition": {"text": "An inhibitory cell pushes other cells down, not up. Select a cell. Then press E / I to switch it.", "pad": "An inhibitory cell pushes other cells down, not up. Select a cell with A. Then move to E / I and press A.", "ids": ["BtnEI", "BtnInhibitory"]},
+	"reflex": {"text": "One disc can stand for many cells. Select a cell. Then set the number in “neurons in group”.", "row": "neurons in group", "ids": []},
+	"m_adaptation": {"text": "A cell has more settings than you see. Select a cell. Then press Advanced to open them.", "ids": ["BtnAdvanced"]},
+	"m_tonic": {"text": "A bias current is a steady push that needs no input. Select a cell. Open Advanced and look for it.", "ids": ["BtnAdvanced"]},
 }
 
 var app
@@ -29,11 +33,15 @@ var tip_task := ""            # the pointer on screen ("" = none)
 var _begin_pending := false   # begin() was called: the next lab_opened(TASK) starts step 1
 var _prev_mode := ""
 var _revisit := false         # this step was reached with Back: it waits for Next (its condition may already hold)
-var _extra := ""              # the second cell step 10 added (removed again when the tutorial ends)
+var _extra := ""              # the second cell step 11 added (removed again when the tutorial ends)
 var _t := 0.0                 # seconds since the step started
 var _idle := 0.0
 var _check_seen := false
 var _checks0 := 0             # lab.play.checks_done when the Check step began
+var _gated := {}              # Control -> its focus mode before the pad gate took the focus off it (dimmed controls are not reachable)
+var _gate_t := 0.0
+var _focus_t := 0.0
+var _pref_done := false       # the pad's focus has been on the control the step is about (it may only appear a moment after the step starts: the inspector is rebuilt)
 var _spikes_seen := false
 var _built_kind := ""
 var _banner: PanelContainer
@@ -138,8 +146,6 @@ func on_back() -> bool:
 	if active: _finish("skipped", true); return true
 	return false
 
-## The lab's end-of-episode card would cover the highlighted control while the tutorial runs.
-func holds_endcard() -> bool: return active
 
 func step_id() -> String:
 	if picker_open: return "picker"
@@ -158,50 +164,71 @@ func _steps() -> Array:
 
 func _build_steps() -> Array:
 	return [
-		{"text": "This is your bench. On the left, a sensor: a sense organ you listen to. On the right, a motor: the muscle you drive. You build the cells in between.",
+		{"text": "This is the bench. On the left is a sensor. It sends a signal in. On the right is a motor. It shows what comes out. You build the cells in between.",
 			"info": true, "kind": "next", "spot": func(): return [_card("in:pulse"), _card("out:spike")]},
-		{"text": "Add a neuron. Press + Excitatory: an excitatory cell pushes the cells it talks to up.",
-			"kind": "act", "spot": func(): return _ctl_rects(["BtnExcitatory"]), "done": func(): return Circuits.neuron_count(lab.circuit) >= 1, "do": func(): lab._add_neuron("E")},
-		{"text": "Wire the sensor to the cell. Drag from the right edge of the sensor card onto the cell.",
-			"kind": "act", "spot": func(): return [_card("in:pulse"), _pop_rect(_first_pop())], "allow": func(): return [_editor_rect()], "ghost": "in",
+		{"text": "Add a cell. Press + Excitatory.", "pad": "Add a cell. Move to + Excitatory and press A.",
+			"kind": "act", "focus": "ctl:BtnExcitatory", "spot": func(): return _ctl_rects(["BtnExcitatory"]), "done": func(): return Circuits.neuron_count(lab.circuit) >= 1, "do": func(): lab._add_neuron("E")},
+		{"text": "Connect the sensor to the cell. Drag from the right edge of the sensor onto the cell.",
+			"pad": "Connect the sensor to the cell. Move the cursor to the sensor and press X. Then move to the cell and press A.",
+			"kind": "act", "focus": "editor", "spot": func(): return [_card("in:pulse"), _pop_rect(_first_pop())], "allow": func(): return [_editor_rect()], "ghost": "in",
 			"done": func(): return not _targets("inputs", "pulse").is_empty(), "do": func(): lab.editor._make_link({"t": "in", "name": "pulse"}, {"t": "pop", "id": _first_pop()})},
-		{"text": "Now the cell to the muscle. Drag from the rim of the cell onto the motor card.",
-			"kind": "act", "spot": func(): return [_pop_rect(_first_pop()), _card("out:spike")], "allow": func(): return [_editor_rect()], "ghost": "out",
+		{"text": "Connect the cell to the motor. Drag from the edge of the cell onto the motor.",
+			"pad": "Connect the cell to the motor. Move the cursor to the cell and press X. Then move to the motor and press A.",
+			"kind": "act", "focus": "editor", "spot": func(): return [_pop_rect(_first_pop()), _card("out:spike")], "allow": func(): return [_editor_rect()], "ghost": "out",
 			"done": func(): return not _targets("outputs", "spike").is_empty(), "do": func(): lab.editor._make_link({"t": "pop", "id": _first_pop()}, {"t": "out", "name": "spike"})},
-		{"text": "It runs live now. In the raster each tick is one spike, a cell's electrical blip. The trace below is the cell's voltage. It rises with the input but never reaches threshold, the line where a spike starts. So the cell stays silent.",
+		{"text": "Press Run. Nothing runs until you press it.", "pad": "Press Run. Nothing runs until you press it. Move to Run and press A, or press Start.",
+			"kind": "act", "focus": "ctl:BtnRun", "spot": func(): return _ctl_rects(["BtnRun"]), "done": func(): return _run_started(), "do": func(): _run_now()},
+		{"text": "Top plot: each tick is one spike. A spike is the cell firing. Bottom line: the cell's voltage. It went up, but not far enough to fire. So there are no spikes yet.",
 			"info": true, "kind": "next", "scopes": true, "spot": func(): return [_rect_of(lab.raster), _rect_of(lab.traces)] + _tab_rects()},
-		{"text": "Click the sensor card. The weight slider is how hard the sensor pushes on the cell. Raise it until the cell spikes.",
-			"kind": "act", "spot": func(): return _weight_spot(), "allow": func(): return [_editor_rect(), _rect_of(lab.inspector)] + _tab_rects(),
-			"done": func(): return _spikes_seen, "do": func(): _set_weight(470.0)},
-		{"text": "Too much and the cell fires on the small blip as well as the big step. Find the middle: spikes on the step only. Adjust the weight until the run passes.",
-			"info": true, "kind": "act", "scopes": true, "spot": func(): return [_rect_of(lab.gauges), _rect_of(lab.raster)] + _tab_rects(), "allow": func(): return [_editor_rect(), _rect_of(lab.inspector), _rect_of(lab.gauges), _rect_of(lab.raster)] + _tab_rects(),
-			"done": func(): return lab.tele != null and bool(lab.tele.score.get("passed", false)), "do": func(): _set_weight(470.0)},
-		{"text": "Check scores your circuit in five slightly different worlds (five seeds: the same level with other noise), faster than watching one run. Press Check.",
-			"kind": "act", "spot": func(): return _ctl_rects(["BtnCheck"]), "done": func(): return _check_seen, "do": func(): lab.play.check_start()},
-		{"text": "The note that just came up is the verdict. It says what to change, never the number to type. A pass earns a star; more come from passing on every seed and staying small.",
-			"info": true, "kind": "next", "spot": func(): return [_rect_of(lab.score_card)]},
-		{"text": "I added a second cell. This switch makes a cell inhibitory: it then pushes its targets down instead of up. Press E / I.",
-			"kind": "act", "spot": func(): return _ctl_rects(["BtnEI"]) if not _ctl_rects(["BtnEI"]).is_empty() else [_pop_rect(_extra)],
+		{"text": "Make the signal stronger. Click the sensor. Drag the weight slider up. Press Run. Repeat until the cell fires.",
+			"pad": "Make the signal stronger. Move the cursor to the sensor and press A. Press Y. Move the weight slider up. Press Start to run. Repeat until the cell fires.",
+			"kind": "act", "focus": "editor", "spot": func(): return _weight_spot() + _ctl_rects(["BtnRun"]), "allow": func(): return [_editor_rect(), _rect_of(lab.inspector)] + _ctl_rects(["BtnRun"]) + _tab_rects(),
+			"done": func(): return _spikes_seen, "do": func(): _set_weight(470.0); _run_now()},
+		{"text": "The goal: fire on the big step, not on the small blip. Too strong and it fires on both. Change the weight, press Run, and read the score on the right. Repeat until it says passed.",
+			"pad": "The goal: fire on the big step, not on the small blip. Too strong and it fires on both. Change the weight. Press Start to run. Read the score on the right. Repeat until it says passed.",
+			"kind": "act", "focus": "ctl:BtnRun", "tab": "world", "spot": func(): return [_rect_of(lab.score_card), _rect_of(lab.inspector)] + _ctl_rects(["BtnRun"]) + _tab_rects(),
+			"allow": func(): return [_editor_rect(), _rect_of(lab.inspector), _rect_of(lab.score_card), _rect_of(lab.raster)] + _ctl_rects(["BtnRun"]) + _tab_rects(),
+			"done": func(): return lab.tele != null and bool(lab.tele.score.get("passed", false)), "do": func(): _set_weight(470.0); _run_now()},
+		{"text": "Press Check. It tests your circuit five times, each with different noise.", "pad": "Move to Check and press A. It tests your circuit five times, each with different noise.",
+			"kind": "act", "focus": "ctl:BtnCheck", "spot": func(): return _ctl_rects(["BtnCheck"]), "done": func(): return _check_seen, "do": func(): lab.play.check_start()},
+		{"text": "The result is on the right. A pass earns a star. Passing all five tests and using few cells earns more.",
+			"info": true, "kind": "next", "tab": "world", "spot": func(): return [_rect_of(lab.score_card)]},
+		{"text": "I added a second cell. Select it and press E / I. Now it is inhibitory: it pushes other cells down instead of up.",
+			"pad": "I added a second cell. Select it with A. Then move to E / I and press A. Now it is inhibitory: it pushes other cells down instead of up.",
+			"kind": "act", "focus": "ctl:BtnEI", "spot": func(): return _ctl_rects(["BtnEI"]) if not _ctl_rects(["BtnEI"]).is_empty() else [_pop_rect(_extra)],
 			"allow": func(): return [_editor_rect(), _rect_of(lab.inspector)], "done": func(): return Circuits.kinds(lab.circuit).get(_extra, "E") == "I", "do": func(): lab.insp.flip_kind(_extra)},
-		{"text": "Stuck? Hint gives small nudges, the Brief says what the level asks, and in Guided mode the recipe is written out right there. Look around, then press Next.",
+		{"text": "Stuck? Hint gives a nudge. Brief says what the level wants. Press Finish.",
 			"kind": "next", "spot": func(): return _hint_spot()},
 	]
+
+## The text of a step: the pad's version while a gamepad is in use and the step has one.
+func _text_of(st: Dictionary) -> String:
+	return str(st["pad"]) if Kit.pad_mode and st.has("pad") else str(st["text"])
+
+## The player started a run (the Run button, Space or Start): it plays or has played.
+func _run_started() -> bool: return lab != null and lab.tele != null and lab.tele.sim != null and (lab.tele.running or lab.tele.t_ms > 0.0)
+
+## Start (or restart) the run for the player, on the bench as it is now.
+func _run_now() -> void:
+	if lab == null or lab.tele == null or lab.tele.sim == null: return
+	if lab._dirty >= 0.0 or lab.tele.finished or not lab.tele.running: lab._toggle_run()
 
 func _goto(n: int) -> void:
 	if OS.get_environment("SP_TUT_LOG") != "": print("TUT step %d -> %d" % [step, n])
 	_sel_done = false
-	step = clampi(n, 1, STEP_COUNT); _t = 0.0; _idle = 0.0; _check_seen = false; _spikes_seen = false; _revisit = false
+	step = clampi(n, 1, STEP_COUNT); _t = 0.0; _idle = 0.0; _check_seen = false; _spikes_seen = false; _revisit = false; _focus_t = 0.0; _pref_done = false
 	if lab == null: return
 	if lab.celebration != null: lab.celebration.dismiss_note()   # the notebook card of the pass that just happened must not follow the player into the next step
 	var st: Dictionary = _steps()[step - 1]
 	if bool(st.get("scopes", false)): _show_tab("scopes_only")
+	elif st.has("tab"): _show_tab(str(st["tab"]))
 	elif lab.layout.compact: _show_tab("circuit")
-	if step == 5 and lab.tele != null: lab.tele.running = true; lab._sync_run_btn()
-	if step == 8: _check_seen = false; _checks0 = lab.play.checks_done
-	if step == 10 and (lab.circuit.get("populations", []) as Array).size() < 2 and _extra == "":
+	if step == 9: _check_seen = false; _checks0 = lab.play.checks_done
+	if step == 11 and (lab.circuit.get("populations", []) as Array).size() < 2 and _extra == "":
 		lab._add_neuron("E"); _extra = str(((lab.circuit["populations"] as Array).back() as Dictionary).get("id", ""))
-	elif step == 10 and _extra != "": lab.editor.select({"t": "pop", "id": _extra})
-	if step == 11: lab.layout.show_brief()
+	elif step == 11 and _extra != "": lab.editor.select({"t": "pop", "id": _extra})
+	if step == 12: lab.layout.show_brief()
+	if lab.editor != null and is_instance_valid(lab.editor): _update_rects(st)   # the new step's lit areas now, so the pad's focus can start on its control
 	_focus.call_deferred()
 	_refresh_text()
 
@@ -217,7 +244,7 @@ func _do() -> void:
 	if not active or lab == null: return
 	var st: Dictionary = _steps()[step - 1]
 	if st.has("do"): (st["do"] as Callable).call()
-	if st.get("kind", "") == "act" and step in [2, 3, 4, 10]: _t = 0.0   # the polled condition fires on the next frames
+	if st.get("kind", "") == "act": _t = 0.0   # the polled condition fires on the next frames
 
 ## End the tutorial: `skipped` or `done`. The helper cell goes, the mode comes back (the picker or the player sets the final one), the map opens.
 func _finish(how: String, go_map: bool) -> void:
@@ -346,27 +373,38 @@ func _process(dt: float) -> void:
 	_spots = []; _allow = []; _ghost = []; _ring = Rect2(); _keep = []
 	if active and lab != null and lab.editor != null and is_instance_valid(lab.editor): _tick_step(dt)
 	elif lab != null and not picker_open: _tick_ambient()
+	if picker_open and Kit.pad_mode:
+		_gate_t -= dt
+		if _gate_t <= 0.0: _gate_t = 0.15; _gate_focus()
+	elif not _gated.is_empty() and not wants_focus(): _ungate_focus()
 	_sync_visible(); _layout_ui(); queue_redraw()
+
+## The lit areas of the step and the areas that take clicks (global rectangles), as the controls are laid out now.
+func _update_rects(st: Dictionary) -> void:
+	_spots = (st["spot"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO)
+	_allow = (st["allow"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO) if st.has("allow") else _spots.duplicate()
 
 func _tick_step(dt: float) -> void:
 	var st: Dictionary = _steps()[step - 1]
-	# live run: keep it going where the step is about watching it
-	if step in [5, 6, 7] and lab.tele != null and lab.tele.sim != null and lab.tele.finished:
-		_idle += dt
-		if _idle > 1.2: _idle = 0.0; lab._restart()
-	if lab.tele != null and lab.tele.sim != null and lab.tele.total_spikes > 0 and step == 6 and not _targets("inputs", "pulse").is_empty() and not _targets("outputs", "spike").is_empty(): _spikes_seen = true
-	if step == 8:
+	# step 7 is done when a run shows spikes (the run is the player's: nothing here starts, restarts or keeps one going)
+	if step == 7 and lab.tele != null and lab.tele.sim != null and lab.tele.total_spikes > 0 and not _targets("inputs", "pulse").is_empty() and not _targets("outputs", "spike").is_empty(): _spikes_seen = true
+	if step == 9:
 		if lab.play._check_job != 0: _check_seen = false; _idle = -1.0   # a check is running
 		elif (_idle < 0.0 or lab.play.checks_done > _checks0) and lab.score_card != null and lab.score_card.check_text != "": _check_seen = true
-	_spots = (st["spot"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO)
-	_allow = (st["allow"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO) if st.has("allow") else _spots.duplicate()
-	if step == 10 and _extra != "" and not _sel_done and lab._dirty < 0.0 and _t > 0.4:   # the engine reload after adding the cell clears the selection: select the cell once more so the E / I button is there
+	_update_rects(st)
+	if step == 11 and _extra != "" and not _sel_done and lab._dirty < 0.0 and _t > 0.4:   # the engine reload after adding the cell clears the selection: select the cell once more so the E / I button is there
 		_sel_done = true; lab.editor.select({"t": "pop", "id": _extra})
-	if str(lab.editor.sel.get("t", "")) == "in" and step >= 6: Progress.meta_put("sensor_opened", true)   # the sensor card was opened: its ring is done (a skipped tutorial keeps the ring)
+	if str(lab.editor.sel.get("t", "")) == "in" and step >= 7: Progress.meta_put("sensor_opened", true)   # the sensor card was opened: its ring is done (a skipped tutorial keeps the ring)
 	_keep = _tab_rects() + ([] if bool(st.get("info", false)) else _spots) + _toast_rects()
-	if str(st.get("ghost", "")) != "": _ghost = _ghost_points(str(st["ghost"]))
+	if str(st.get("ghost", "")) != "" and not Kit.pad_mode: _ghost = _ghost_points(str(st["ghost"]))
+	if Kit.pad_mode:
+		_gate_t -= dt; _focus_t -= dt
+		if _gate_t <= 0.0: _gate_t = 0.15; _gate_focus()
+		if _focus_t <= 0.0:   # the focus is somewhere it may be: else it goes back to the step's own control (a rebuilt inspector drops it)
+			_focus_t = 0.3
+			var fo := get_viewport().gui_get_focus_owner()
+			if fo == null or not focus_ok(fo) or (not _pref_done and _t < 2.5): _focus()
 	if st.get("kind", "") == "act" and st.has("done") and not _revisit and _t > 0.15 and (st["done"] as Callable).call(): _next(); return
-	if step == 5 and not _revisit and _t > 6.0: _next()
 	if OS.get_environment("SP_TUT_SHOTS") != "" and _t > 1.2 and _shot_done != step: _shot_done = step; _dev_shot("step_%02d" % step)
 	if OS.get_environment("SP_TUT_SHOTS") != "" and _shot_done != step: return   # the dev walk waits for the picture of this step
 	if OS.get_environment("SP_TUT_STEP") != "" and step < int(OS.get_environment("SP_TUT_STEP")) and _t > 0.8:   # dev walk (screenshots): do each step for the player
@@ -508,8 +546,8 @@ func _refresh_text() -> void:
 	_ensure_ui()
 	if not active or step < 1: return
 	var st: Dictionary = _steps()[step - 1]
-	_lbl_step.text = "Plate 0 · the first neuron · step %d of %d" % [step, STEP_COUNT + 1]
-	_lbl_text.text = str(st["text"])
+	_lbl_step.text = "Tutorial · step %d of %d" % [step, STEP_COUNT + 1]
+	_lbl_text.text = _text_of(st)
 	var act := str(st.get("kind", "next")) == "act"
 	_btn_next.visible = (not act) or _revisit
 	_btn_next.text = "Next" if step < STEP_COUNT else "Finish"
@@ -518,7 +556,7 @@ func _refresh_text() -> void:
 
 func _layout_ui() -> void:
 	_ensure_ui()
-	if active and (_lbl_text.text != str((_steps()[step - 1] as Dictionary)["text"]) or _btn_next.visible != ((str((_steps()[step - 1] as Dictionary).get("kind", "")) != "act") or _revisit)): _refresh_text()
+	if active and (_lbl_text.text != _text_of(_steps()[step - 1] as Dictionary) or _btn_next.visible != ((str((_steps()[step - 1] as Dictionary).get("kind", "")) != "act") or _revisit)): _refresh_text()
 	var vp := _vp(); var phone := Layout.phone; var m := 12.0 if phone else 24.0
 	if _banner.visible:
 		var w := minf(vp.x - 2.0 * m, 880.0 * Kit.f() if not phone else vp.x)
@@ -542,14 +580,62 @@ func _overlap(r: Rect2, rs: Array) -> float:
 
 func _place_center(c: Control, vp: Vector2) -> void: c.position = ((vp - c.size) * 0.5).max(Vector2(8, 8))
 
+## True when the pad may rest on `c`: the tutorial's own buttons, or a control inside a lit area (a dimmed control takes no focus while a gamepad is in use).
+func focus_ok(c: Control) -> bool:
+	if c == null or not Kit.pad_mode: return true
+	if c == self or is_ancestor_of(c): return true
+	if picker_open: return false
+	if not active: return true
+	var gp := c.get_global_rect().get_center()
+	for r in _allow:
+		if (r as Rect2).grow(8.0).has_point(gp): return true
+	return false
+
+## The pad is in use (or has just come on) and the tutorial or the picker is up: the focus goes to the step's own control.
+func wants_focus() -> bool: return Kit.pad_mode and (active or picker_open)
+
+func focus_now() -> void:
+	_gate_focus()
+	if picker_open:
+		if _picker != null and is_instance_valid(_picker):
+			var cur := _picker.find_child("Mode_" + Progress.mode(), true, false) as Control
+			if cur != null and cur.is_visible_in_tree(): cur.grab_focus()
+	elif active and lab != null: _focus()
+
+## While a gamepad is in use, every control outside the lit areas (and everything under the mode picker) gets no focus, so the D-pad can only land where the step allows.
+func _gate_focus() -> void:
+	if app == null or not wants_focus():
+		_ungate_focus(); return
+	var root: Node = app.get("root") if app.get("root") != null else null
+	if root == null: return
+	for c in root.find_children("*", "Control", true, false):
+		var ctl := c as Control
+		if ctl == self or is_ancestor_of(ctl): continue
+		if _gated.has(ctl):
+			if focus_ok(ctl) and not picker_open: ctl.focus_mode = int(_gated[ctl]) as Control.FocusMode; _gated.erase(ctl)
+			continue
+		if ctl.focus_mode != Control.FOCUS_NONE and not focus_ok(ctl):
+			_gated[ctl] = int(ctl.focus_mode); ctl.focus_mode = Control.FOCUS_NONE
+	for k in _gated.keys():
+		if not is_instance_valid(k): _gated.erase(k)
+
+func _ungate_focus() -> void:
+	for k in _gated:
+		if is_instance_valid(k): (k as Control).focus_mode = int(_gated[k]) as Control.FocusMode
+	_gated = {}
+
+## The control the step is about takes the focus: its own lit control, else Next, else Do it for me.
 func _focus() -> void:
-	if not Kit.pad_mode or not active: return
+	if not Kit.pad_mode or not active or lab == null or not is_instance_valid(lab): return
+	_gate_focus()
 	var st: Dictionary = _steps()[step - 1]
 	var want: Control = null
-	if str(st.get("kind", "")) == "act":
-		var ids := {2: "BtnExcitatory", 8: "BtnCheck", 10: "BtnEI"}
-		if ids.has(step): want = _ctl(ids[step])
-	if want == null or want.focus_mode != Control.FOCUS_ALL: want = _btn_next if _btn_next.visible else _btn_do
+	var f := str(st.get("focus", ""))
+	if f == "editor": want = lab.editor
+	elif f.begins_with("ctl:"): want = _ctl(f.substr(4))
+	if want == null or want.focus_mode != Control.FOCUS_ALL or not want.is_visible_in_tree() or not focus_ok(want):
+		want = _btn_next if _btn_next.visible else _btn_do
+	else: _pref_done = true
 	if want != null and want.is_visible_in_tree(): want.grab_focus()
 
 # ----- the one-step pointer -----
@@ -593,13 +679,13 @@ func show_picker() -> void:
 	_picker = PanelContainer.new(); Kit.ident(_picker, "TutPicker")
 	_picker.add_theme_stylebox_override("panel", Kit.plate_sb(Kit.PANEL, 24 if not phone else 12))
 	var v := VBoxContainer.new(); v.add_theme_constant_override("separation", 10 if not phone else 6); _picker.add_child(v)
-	v.add_child(Kit.small_caps("Plate 0 · the first neuron · step %d of %d" % [STEP_COUNT + 1, STEP_COUNT + 1], 14 if not phone else 11, Kit.TEXT_SOFT))
+	v.add_child(Kit.small_caps("Tutorial · step %d of %d" % [STEP_COUNT + 1, STEP_COUNT + 1], 14 if not phone else 11, Kit.TEXT_SOFT))
 	v.add_child(Kit.shout("How much help do you want?", int(40 * f) if not phone else 24, Kit.TEXT))
 	var wide := minf(_vp().x - 32.0, 760.0 * f if not phone else _vp().x)
-	var intro := Kit.label("Pick one to go on to the map. You can change it any time with the mode switch there.", int(20 * f) if not phone else 14, Kit.TEXT_SOFT, true); intro.custom_minimum_size.x = wide - 60.0; v.add_child(intro)
-	var lines := {"guided": "The recipe is written out in the brief, hints are free and the pass bands are wide.",
-		"standard": "The recipe is behind a button and costs a star. Hints open after two missed runs.",
-		"researcher": "No recipe and no hints. A pass needs every seed to pass, with realistic noise."}
+	var intro := Kit.label("Pick one to go to the map. You can change it later with the mode switch on the map.", int(20 * f) if not phone else 14, Kit.TEXT_SOFT, true); intro.custom_minimum_size.x = wide - 60.0; v.add_child(intro)
+	var lines := {"guided": "The brief tells you how to build it. Hints are free. It is easier to pass.",
+		"standard": "The how-to is behind a button, and using it costs a star. Hints open after two missed runs.",
+		"researcher": "No how-to and no hints. To pass, all five test runs must pass. The noise is realistic."}
 	for m in Progress.MODES:
 		var row := HBoxContainer.new(); row.add_theme_constant_override("separation", 14); v.add_child(row)
 		var b := _mk(Progress.MODE_NAMES[m], func(): _pick(m), "amber" if m == Progress.mode() else "panel", int(24 * f) if not phone else 16, "Mode_" + m)
@@ -612,7 +698,7 @@ func show_picker() -> void:
 		if _picker != null and is_instance_valid(_picker):
 			_picker.reset_size(); _place_center(_picker, _vp())
 			var cur := _picker.find_child("Mode_" + Progress.mode(), true, false) as Control
-			if cur != null and Kit.pad_mode: cur.grab_focus()).call_deferred()
+			if cur != null and Kit.pad_mode: _gate_focus(); cur.grab_focus()).call_deferred()
 
 func close_picker() -> void:
 	picker_open = false
