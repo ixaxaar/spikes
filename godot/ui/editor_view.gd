@@ -1429,11 +1429,11 @@ func _card_off(key: String) -> Vector2:
 	return Vector2(float(a[0]), float(a[1])) if a is Array and (a as Array).size() >= 2 else Vector2.ZERO
 
 func _set_card_off(key: String, v: Vector2) -> void:
-	if not (circuit.get("meta", {}) is Dictionary): circuit["meta"] = {}
+	if not (circuit.get("meta") is Dictionary): circuit["meta"] = {}
 	var meta: Dictionary = circuit["meta"]
-	if not (meta.get("editor", {}) is Dictionary): meta["editor"] = {}
+	if not (meta.get("editor") is Dictionary): meta["editor"] = {}
 	var ed: Dictionary = meta["editor"]
-	if not (ed.get("cards", {}) is Dictionary): ed["cards"] = {}
+	if not (ed.get("cards") is Dictionary): ed["cards"] = {}
 	var co: Dictionary = ed["cards"]
 	if v.length() < 0.01: co.erase(key)
 	else: co[key] = [v.x, v.y]
