@@ -1420,20 +1420,20 @@ func _link_hit(eo: Dictionary) -> Dictionary:
 ## The offset (model units) the player moved a card by: meta.editor.cards = {"in:<name>" | "out:<name>" | "bus:in:<stem>": [dx, dy]}, relative to where the layout puts it.
 func _card_off(key: String) -> Vector2:
 	var meta: Variant = circuit.get("meta", {})
-	if not meta is Dictionary: return Vector2.ZERO
+	if not (meta is Dictionary): return Vector2.ZERO
 	var ed: Variant = (meta as Dictionary).get("editor", {})
-	if not ed is Dictionary: return Vector2.ZERO
+	if not (ed is Dictionary): return Vector2.ZERO
 	var co: Variant = (ed as Dictionary).get("cards", {})
-	if not co is Dictionary or not (co as Dictionary).has(key): return Vector2.ZERO
+	if not (co is Dictionary) or not (co as Dictionary).has(key): return Vector2.ZERO
 	var a: Variant = (co as Dictionary)[key]
 	return Vector2(float(a[0]), float(a[1])) if a is Array and (a as Array).size() >= 2 else Vector2.ZERO
 
 func _set_card_off(key: String, v: Vector2) -> void:
-	if not circuit.get("meta", {}) is Dictionary: circuit["meta"] = {}
+	if not (circuit.get("meta", {}) is Dictionary): circuit["meta"] = {}
 	var meta: Dictionary = circuit["meta"]
-	if not meta.get("editor", {}) is Dictionary: meta["editor"] = {}
+	if not (meta.get("editor", {}) is Dictionary): meta["editor"] = {}
 	var ed: Dictionary = meta["editor"]
-	if not ed.get("cards", {}) is Dictionary: ed["cards"] = {}
+	if not (ed.get("cards", {}) is Dictionary): ed["cards"] = {}
 	var co: Dictionary = ed["cards"]
 	if v.length() < 0.01: co.erase(key)
 	else: co[key] = [v.x, v.y]
