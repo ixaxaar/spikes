@@ -71,7 +71,7 @@ func _run(app_: Node) -> void:
 		if only != "" and not str(e["id"]).contains(only): seen_edges[e["id"]] = true; continue
 		await _walk_edge(e)
 	for n in g.get("negatives", []): await _negative(n)
-	await _pad_tutorial()
+	if only == "" or only.contains("pad"): await _pad_tutorial()   # SP_UIGRAPH_ONLY=pad walks only the gamepad tutorial
 	_coverage()
 	var secs := (Time.get_ticks_msec() - t0) / 1000.0
 	print("UIGRAPH walked %d edges, %d nodes seen of %d, %d negatives, %d world resets, %d clicks (%d emitted instead), %.0f s" % [seen_edges.size(), seen_nodes.size(), nodes.size(), g.get("negatives", []).size(), world_resets, clicks, synthetic, secs])
