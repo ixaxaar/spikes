@@ -663,7 +663,7 @@ func _pad_press(btn: JoyButton) -> void:
 ## Where the focus goes from `c` when the D-pad is pressed toward `btn` (the bench takes the first presses with its cursor, so it gets several tries); null when it stays.
 func _pad_leave(c: Control, btn: JoyButton) -> Control:
 	for i in (8 if c is CircuitEditor else 1):
-		if not is_instance_valid(c): return null
+		if not is_instance_valid(c) or not c.is_inside_tree(): return null
 		c.grab_focus(); await _frames(1)
 		await _pad_press(btn)
 		var n := vp.gui_get_focus_owner()
@@ -714,6 +714,7 @@ func _pad_tutorial() -> void:
 		var banner := {"next": tut.find_child("TutNext", true, false), "do": tut.find_child("TutDo", true, false), "back": tut.find_child("TutBack", true, false), "skip": tut.find_child("TutSkip", true, false)}
 		var start_id := str(PAD_START[n])
 		var want_of := func() -> Control: return banner["next"] if start_id == "next" else (lab.editor if start_id == "editor" else _find(start_id, lab))
+		await _wait(func(): return false, 1.2)   # the engine reload and the inspector's rebuild after some steps start (the second cell of step 11) settle first
 		await _wait(func(): var w: Control = want_of.call(); return w != null and vp.gui_get_focus_owner() == w, 8.0)   # the lit control may appear a moment after the step starts
 		var want: Control = want_of.call()
 		var fo := vp.gui_get_focus_owner()
@@ -730,6 +731,8 @@ func _pad_tutorial() -> void:
 		if start != null:
 			for miss in await _pad_unreached(start, goals, "step %d" % n): _fail("the pad cannot reach '%s' (%s, rect %s, focus mode %d); the focus can reach: %s" % [_raw_id(miss), miss.get_class(), str(miss.get_global_rect()), miss.focus_mode, _pad_seen_text])
 		# the step, done with the pad
+		want = want_of.call()
+		if want != null: want.grab_focus()
 		match n:
 			2: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
 			3:
