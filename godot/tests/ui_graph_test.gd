@@ -596,7 +596,13 @@ func _first_pop() -> String:
 ## Wire a cell if the bench has none, then select the link of a sensor to it (or of it to a motor) with a real click on the link.
 func _link_select(is_in: bool) -> void:
 	var lab := _lab(); var ed := lab.editor
+	# a known bench: one cell and nothing wired (the circuit an earlier edge left in the lab's memory is not this edge's business)
+	for ps in (lab.circuit.get("populations", []) as Array).slice(1): Circuits.remove_population(lab.circuit, str(ps["id"]))
+	lab.circuit["projections"] = []
+	for ch in lab.circuit.get("inputs", []): ch["targets"] = []
+	for ch in lab.circuit.get("outputs", []): ch["neurons"] = []
 	if _first_pop() == "": lab._add_neuron("E")
+	lab._on_structure(); await _settle()
 	var pid := _first_pop()
 	var chs: Array = lab.circuit.get("inputs" if is_in else "outputs", [])
 	if chs.is_empty(): _fail("the circuit has no %s channel" % ("sensor" if is_in else "motor")); return
@@ -642,6 +648,7 @@ func _editor_action(act: String) -> void:
 
 
 # ---------------------------------------------------------------------------------------------------- the tutorial with a gamepad only
+var _pad_seen_text := ""   # what the last pad reachability search reached (for the failure message)
 const PAD_DIRS := [JOY_BUTTON_DPAD_LEFT, JOY_BUTTON_DPAD_RIGHT, JOY_BUTTON_DPAD_UP, JOY_BUTTON_DPAD_DOWN]
 ## The focus each step starts on (a control id, "editor", or "next").
 const PAD_START := {1: "next", 2: "BtnExcitatory", 3: "editor", 4: "editor", 5: "BtnRun", 6: "next", 7: "editor", 8: "BtnRun", 9: "BtnCheck", 10: "next", 11: "BtnEI", 12: "next"}
@@ -667,6 +674,7 @@ func _pad_leave(c: Control, btn: JoyButton) -> Control:
 func _pad_unreached(start: Control, goals: Array, what: String) -> Array:
 	var tut = app.tutorial
 	var seen := {start: true}; var queue: Array = [start]; var found := {}
+	_pad_seen_text = ""
 	while not queue.is_empty():
 		var c: Control = queue.pop_front()
 		if goals.has(c): found[c] = true
@@ -674,7 +682,7 @@ func _pad_unreached(start: Control, goals: Array, what: String) -> Array:
 			var n: Control = await _pad_leave(c, b)
 			if n == null: continue
 			if not tut.focus_ok(n): _fail("%s: the pad focus can land on '%s' (%s), a control the tutorial dims" % [what, _raw_id(n), n.get_class()])
-			if not seen.has(n): seen[n] = true; queue.append(n)
+			if not seen.has(n): seen[n] = true; queue.append(n); _pad_seen_text += "%s '%s' %s; " % [n.get_class(), _raw_id(n), str(n.get_global_rect())]
 	return goals.filter(func(gc): return not found.has(gc))
 
 func _pad_cursor_to(kind: String, dir: JoyButton) -> bool:
@@ -720,7 +728,7 @@ func _pad_tutorial() -> void:
 		goals = goals.filter(func(gc): return gc != null and gc.is_visible_in_tree())
 		var start: Control = want if want != null else fo
 		if start != null:
-			for miss in await _pad_unreached(start, goals, "step %d" % n): _fail("the pad cannot reach '%s' (%s)" % [_raw_id(miss), miss.get_class()])
+			for miss in await _pad_unreached(start, goals, "step %d" % n): _fail("the pad cannot reach '%s' (%s, rect %s, focus mode %d); the focus can reach: %s" % [_raw_id(miss), miss.get_class(), str(miss.get_global_rect()), miss.focus_mode, _pad_seen_text])
 		# the step, done with the pad
 		match n:
 			2: want.grab_focus(); await _pad_press(JOY_BUTTON_A)
@@ -745,7 +753,8 @@ func _pad_tutorial() -> void:
 				var sl := lab.insp_body.find_children("*", "HSlider", true, false)
 				if sl.is_empty(): _fail("selecting the sensor with A showed no weight slider")
 				else:
-					for miss in await _pad_unreached(lab.editor, [sl[0]], "step 7"): _fail("the pad cannot reach the weight slider")
+					await _wait(func(): return (sl[0] as Control).focus_mode == Control.FOCUS_ALL, 5.0)   # the gate lets the lit weight row take focus within a moment
+					for miss in await _pad_unreached(lab.editor, [sl[0]], "step 7"): _fail("the pad cannot reach the weight slider; the focus can reach: %s" % _pad_seen_text)
 					(sl[0] as HSlider).value = sqrt(470.0 / Circuits.input_wmax_for("", "dc", lab.task_id))
 				await _pad_press(JOY_BUTTON_START)   # Start runs
 			8: pass   # the run of step 7 plays on; the step ends when it passes

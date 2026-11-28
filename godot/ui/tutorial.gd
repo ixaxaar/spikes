@@ -56,6 +56,7 @@ var _tip_lbl: Label
 var _picker: PanelContainer
 var _spots: Array = []        # global Rect2s lit this frame
 var _allow: Array = []        # global Rect2s that take clicks
+var _focus_rects: Array = []  # global Rect2s the pad's focus may rest in (the lit controls, and the bench when the step is done on it): narrower than _allow, so that no focusable control hides the banner from the D-pad
 var _ghost: Array = []        # [from, to] global points of the animated drag, or []
 var _keep: Array = []         # global Rect2s the banner must stay off (what must be clicked)
 var _ring := Rect2()          # the ambient ring (global), size 0 = none
@@ -187,6 +188,7 @@ func _build_steps() -> Array:
 		{"text": "The goal: fire on the big step, not on the small blip. Too strong and it fires on both. Change the weight, press Run, and read the score on the right. Repeat until it says passed.",
 			"pad": "The goal: fire on the big step, not on the small blip. Too strong and it fires on both. Change the weight. Press Start to run. Read the score on the right. Repeat until it says passed.",
 			"kind": "act", "focus": "ctl:BtnRun", "tab": "world", "spot": func(): return [_rect_of(lab.score_card), _rect_of(lab.inspector)] + _ctl_rects(["BtnRun"]) + _tab_rects(),
+			"fr": func(): return _weight_spot() + _ctl_rects(["BtnRun"]) + _tab_rects(),
 			"allow": func(): return [_editor_rect(), _rect_of(lab.inspector), _rect_of(lab.score_card), _rect_of(lab.raster)] + _ctl_rects(["BtnRun"]) + _tab_rects(),
 			"done": func(): return lab.tele != null and bool(lab.tele.score.get("passed", false)), "do": func(): _set_weight(470.0); _run_now()},
 		{"text": "Press Check. It tests your circuit five times, each with different noise.", "pad": "Move to Check and press A. It tests your circuit five times, each with different noise.",
@@ -198,7 +200,7 @@ func _build_steps() -> Array:
 			"kind": "act", "focus": "ctl:BtnEI", "spot": func(): return _ctl_rects(["BtnEI"]) if not _ctl_rects(["BtnEI"]).is_empty() else [_pop_rect(_extra)],
 			"allow": func(): return [_editor_rect(), _rect_of(lab.inspector)], "done": func(): return Circuits.kinds(lab.circuit).get(_extra, "E") == "I", "do": func(): lab.insp.flip_kind(_extra)},
 		{"text": "Stuck? Hint gives a nudge. Brief says what the level wants. Press Finish.",
-			"kind": "next", "spot": func(): return _hint_spot()},
+			"kind": "next", "spot": func(): return _hint_spot(), "fr": func(): var r := _ctl_rects(["BtnHint", "BtnBrief"]); return r if not r.is_empty() else _ctl_rects(["BtnMore"])},
 	]
 
 ## The text of a step: the pad's version while a gamepad is in use and the step has one.
@@ -383,6 +385,9 @@ func _process(dt: float) -> void:
 func _update_rects(st: Dictionary) -> void:
 	_spots = (st["spot"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO)
 	_allow = (st["allow"] as Callable).call().filter(func(r): return (r as Rect2).size != Vector2.ZERO) if st.has("allow") else _spots.duplicate()
+	var base: Array = (st["fr"] as Callable).call() if st.has("fr") else _spots
+	_focus_rects = base.filter(func(r): return (r as Rect2).size != Vector2.ZERO)
+	if str(st.get("focus", "")) == "editor": _focus_rects.append(_editor_rect())
 
 func _tick_step(dt: float) -> void:
 	var st: Dictionary = _steps()[step - 1]
@@ -587,7 +592,7 @@ func focus_ok(c: Control) -> bool:
 	if picker_open: return false
 	if not active: return true
 	var gp := c.get_global_rect().get_center()
-	for r in _allow:
+	for r in _focus_rects:
 		if (r as Rect2).grow(8.0).has_point(gp): return true
 	return false
 

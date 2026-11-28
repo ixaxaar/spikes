@@ -1616,7 +1616,11 @@
      "BtnRun": "Pause"
     }
    },
-   "note": "Run starts the run (it never starts by itself); the button then reads Pause."
+   "note": "Run starts the run (it never starts by itself); the button then reads Pause.",
+   "needs_reference": true,
+   "setup": {
+    "mode": "guided"
+   }
   },
   {
    "id": "lab.reset",
