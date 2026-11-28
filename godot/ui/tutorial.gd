@@ -212,8 +212,8 @@ func _run_started() -> bool: return lab != null and lab.tele != null and lab.tel
 
 ## Start (or restart) the run for the player, on the bench as it is now.
 func _run_now() -> void:
-	if lab == null or lab.tele == null or lab.tele.sim == null: return
-	if lab._dirty >= 0.0 or lab.tele.finished or not lab.tele.running: lab._toggle_run()
+	if lab == null or lab.tele == null: return
+	if lab._dirty >= 0.0 or lab.tele.finished or not lab.tele.running: lab._toggle_run()   # (an edit still waiting for its reload is reloaded first, by _toggle_run)
 
 func _goto(n: int) -> void:
 	if OS.get_environment("SP_TUT_LOG") != "": print("TUT step %d -> %d" % [step, n])
